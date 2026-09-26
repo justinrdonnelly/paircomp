@@ -256,8 +256,10 @@ fn scan_file(path: &Path, through_line: Option<u64>) -> Result<FileInfo, Error> 
     if !std::fs::metadata(path)?.is_file() {
         return Err(Error::NotRegularFile);
     }
-    let mut file = File::open(path)?;
+    scan_reader(File::open(path)?, through_line)
+}
 
+fn scan_reader(mut reader: impl Read, through_line: Option<u64>) -> Result<FileInfo, Error> {
     let mut hasher = blake3::Hasher::new();
     let mut byte_len = 0_u64;
     let mut lf_count = 0_u64;
@@ -267,7 +269,11 @@ fn scan_file(path: &Path, through_line: Option<u64>) -> Result<FileInfo, Error> 
     if through_line != Some(0) {
         loop {
             // `read` is the number of bytes this call put into the buffer.
-            let read = file.read(&mut buffer)?;
+            let read = match reader.read(&mut buffer) {
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
             if read == 0 {
                 break;
             }
@@ -311,3 +317,6 @@ fn scan_file(path: &Path, through_line: Option<u64>) -> Result<FileInfo, Error> 
         fingerprint: Fingerprint(*hasher.finalize().as_bytes()),
     })
 }
+
+#[cfg(test)]
+mod tests;
