@@ -184,6 +184,21 @@ fn invalid_or_aborted_input_exits_with_status_two() {
 }
 
 #[test]
+fn unterminated_answers_abort_at_every_prompt() {
+    let fixture = Fixture::new(b"a\n");
+    for answers in ["yes", "  ", "no\n2", "no\n2\ny"] {
+        let output = invoke(fixture.path(), answers);
+        assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
+        assert!(
+            stderr(&output).contains("input ended"),
+            "answers: {answers:?}"
+        );
+        assert!(!stdout(&output).contains("Files match."));
+        assert!(!stdout(&output).contains("First divergence:"));
+    }
+}
+
+#[test]
 fn inconsistent_empty_mismatch_and_invalid_files_exit_with_status_two() {
     let fixture = Fixture::new(b"");
     let mismatch = invoke(fixture.path(), "no\n0\n");

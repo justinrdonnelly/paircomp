@@ -139,7 +139,8 @@ fn read_prompt(
     write!(output, "{prompt}")?;
     output.flush()?;
     let mut answer = String::new();
-    if input.read_line(&mut answer)? == 0 {
+    input.read_line(&mut answer)?;
+    if !answer.ends_with('\n') {
         return Err(WorkflowError::Aborted);
     }
     Ok(answer)

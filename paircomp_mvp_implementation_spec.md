@@ -250,6 +250,7 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 - The other-line-count prompt has no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
 - Invalid answers or counts produce a diagnostic and terminate with status 2. The user must restart both instances to begin a new comparison session.
 - Stdin EOF is an aborted interaction and terminates with status 2. It must never be interpreted as a blank answer or a sequence of `no` answers.
+- A partial answer followed by EOF without a newline also aborts; only a newline submits a prompt answer.
 
 ## 8. Example interaction
 
