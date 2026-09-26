@@ -349,9 +349,9 @@ Work through these milestones in order, marking items complete after the corresp
 
 ### 13.1 Foundation
 
-- [ ] Create the Cargo workspace with `paircomp-core` and `paircomp-cli`, with the CLI depending on the core and exposing a binary named `paircomp`.
-- [ ] Configure package/version/license metadata and use the existing `COPYING` license file.
-- [ ] Establish a buildable crate structure that preserves the architecture in section 3. Add dependencies only as they are needed, verifying and documenting their licenses and purpose at that time.
+- [x] Create the Cargo workspace with `paircomp-core` and `paircomp-cli`, with the CLI depending on the core and exposing a binary named `paircomp`.
+- [x] Configure package/version/license metadata and use the existing `COPYING` license file.
+- [x] Establish a buildable crate structure that preserves the architecture in section 3. Add dependencies only as they are needed, verifying and documenting their licenses and purpose at that time.
 
 Completion criteria: the workspace builds, the core can be built independently, and dependency direction and crate responsibilities match section 3.
 

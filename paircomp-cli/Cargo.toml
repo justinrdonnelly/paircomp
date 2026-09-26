@@ -1,0 +1,13 @@
+[package]
+name = "paircomp-cli"
+description = "Command-line interface for Paircomp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "paircomp"
+path = "src/main.rs"
+
+[dependencies]
+paircomp-core = { path = "../paircomp-core" }

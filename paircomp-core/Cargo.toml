@@ -1,0 +1,10 @@
+[package]
+name = "paircomp-core"
+description = "File inspection and comparison logic for Paircomp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "paircomp_core"
+path = "src/lib.rs"
