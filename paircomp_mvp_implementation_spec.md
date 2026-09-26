@@ -381,9 +381,9 @@ Completion criteria: `paircomp FILE`, `--help`, and `--version` work as specifie
 
 ### 13.5 Documentation and MVP verification
 
-- [ ] Complete the README with build/run instructions, paired-instance usage, a comparison example, exit statuses, fingerprint limitations, and the requirement to restart after editing either file.
-- [ ] Complete dependency/license notices and document the MVP scope, including within-line localization as a future enhancement.
-- [ ] Run the verification checks in `AGENTS.md` and review the implementation against every requirement in section 11 and the definition of done in section 14. Exercise the workflow with two separate instances, each opening only its own file, for both matching and differing fixtures, including unequal line counts.
+- [x] Complete the README with build/run instructions, paired-instance usage, a comparison example, exit statuses, fingerprint limitations, and the requirement to restart after editing either file.
+- [x] Complete dependency/license notices and document the MVP scope, including within-line localization as a future enhancement.
+- [x] Run the verification checks in `AGENTS.md` and review the implementation against every requirement in section 11 and the definition of done in section 14. Exercise the workflow with two separate instances, each opening only its own file, for both matching and differing fixtures, including unequal line counts.
 
 Completion criteria: required checks pass, documented usage matches the implemented behavior, and the definition of done is satisfied. Record verification results and any remaining limitations in the handoff; leave incomplete checklist items unchecked.
 
