@@ -365,9 +365,9 @@ Completion criteria: tests verify the expected metadata and exact bytes included
 
 ### 13.3 Deterministic search
 
-- [ ] Implement the core search state and exact bounds/transitions from sections 4.1 and 6, including unequal line counts and invalid state operations.
-- [ ] Add the paired-instance tests from section 11, using actual prefix comparisons to drive both states.
-- [ ] Preserve the typed line result and core byte operations needed for the future extension in section 4.2, without implementing within-line localization or unused APIs.
+- [x] Implement the core search state and exact bounds/transitions from sections 4.1 and 6, including unequal line counts and invalid state operations.
+- [x] Add the paired-instance tests from section 11, using actual prefix comparisons to drive both states.
+- [x] Preserve the typed line result and core byte operations needed for the future extension in section 4.2, without implementing within-line localization or unused APIs.
 
 Completion criteria: both simulated instances request the same line at every step, terminate at the expected first divergence, and handle all specified search edge cases without CLI involvement.
 

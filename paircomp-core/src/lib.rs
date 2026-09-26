@@ -1,4 +1,4 @@
-//! Raw-byte file inspection and prefix fingerprinting for Paircomp.
+//! Raw-byte file inspection, prefix fingerprinting, and line search for Paircomp.
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -40,6 +40,10 @@ pub enum Error {
     NotRegularFile,
     /// A byte count or line count cannot fit in `u64`.
     FileTooLarge,
+    /// Both supplied line counts are zero despite a reported mismatch.
+    EmptyFilesCannotDiffer,
+    /// An answer was submitted after the search had reached its result.
+    SearchAlreadyComplete,
 }
 
 impl fmt::Display for Error {
@@ -48,6 +52,8 @@ impl fmt::Display for Error {
             Self::Io(error) => write!(f, "file I/O failed: {error}"),
             Self::NotRegularFile => f.write_str("input is not a regular file"),
             Self::FileTooLarge => f.write_str("file size or line count exceeds u64"),
+            Self::EmptyFilesCannotDiffer => f.write_str("two empty files cannot differ"),
+            Self::SearchAlreadyComplete => f.write_str("line search is already complete"),
         }
     }
 }
@@ -56,7 +62,10 @@ impl StdError for Error {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::NotRegularFile | Self::FileTooLarge => None,
+            Self::NotRegularFile
+            | Self::FileTooLarge
+            | Self::EmptyFilesCannotDiffer
+            | Self::SearchAlreadyComplete => None,
         }
     }
 }
@@ -64,6 +73,109 @@ impl StdError for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+/// The comparison requested by a line search, or its typed result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SearchStep {
+    /// Compare file prefixes through this line, including its LF if present.
+    CompareThroughLine {
+        /// The 1-based line position.
+        line: u64,
+    },
+    /// The first differing line; it may be beyond the local EOF.
+    DifferenceAtLine {
+        /// The 1-based line position.
+        line: u64,
+    },
+}
+
+/// Inclusive candidate bounds for the first differing line.
+///
+/// Construct this only after the whole-file fingerprints have been reported
+/// as different. The caller supplies each instance's line count and the
+/// count reported by the other instance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineSearch {
+    low: u64,
+    high: u64,
+}
+
+impl LineSearch {
+    /// Creates a line search using both copies' counts.
+    ///
+    /// Construct only after comparing the whole-file fingerprints and establishing
+    /// a mismatch. Supply the local line count and the count reported by the other
+    /// copy; either count may be zero. Both files must stay unchanged, and both
+    /// instances must use accurate counts and the same comparison answers.
+    ///
+    /// The larger count determines the shared upper bound. The constructor does
+    /// not read either file or verify the reported mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::EmptyFilesCannotDiffer`] when both counts are zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paircomp_core::{LineSearch, SearchStep};
+    ///
+    /// // The whole-file fingerprints differ; the copies have 3 and 4 lines.
+    /// let mut search = LineSearch::new(3, 4)?;
+    /// assert_eq!(search.current_step(), SearchStep::CompareThroughLine { line: 2 });
+    /// search.record_result(true)?; // The prefixes through line 2 match.
+    /// assert_eq!(search.current_step(), SearchStep::CompareThroughLine { line: 3 });
+    /// search.record_result(false)?; // The prefixes through line 3 differ.
+    /// assert_eq!(search.current_step(), SearchStep::DifferenceAtLine { line: 3 });
+    /// # Ok::<(), paircomp_core::Error>(())
+    /// ```
+    pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error> {
+        let high = local_line_count.max(other_line_count);
+        if high == 0 {
+            return Err(Error::EmptyFilesCannotDiffer);
+        }
+        Ok(Self { low: 1, high })
+    }
+
+    /// Returns the next prefix comparison or the completed line result.
+    ///
+    /// Repeated calls leave the state unchanged. Positions are 1-based; a final
+    /// result can refer to a line absent from the shorter copy. When only one
+    /// candidate remains, returns [`SearchStep::DifferenceAtLine`] without
+    /// requesting another comparison.
+    pub fn current_step(&self) -> SearchStep {
+        if self.low == self.high {
+            SearchStep::DifferenceAtLine { line: self.low }
+        } else {
+            SearchStep::CompareThroughLine {
+                line: self.low + (self.high - self.low) / 2,
+            }
+        }
+    }
+
+    /// Applies the answer to the comparison returned by [`Self::current_step`].
+    ///
+    /// Pass `true` when the two fingerprints from [`crate::fingerprint_through_line`]
+    /// match, or `false` when they differ. A match excludes the prefix through the
+    /// requested line; a mismatch retains that position as a candidate. The
+    /// caller must supply the answer for the current comparison on both copies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::SearchAlreadyComplete`] if the result is already known.
+    /// An error leaves the search unchanged.
+    pub fn record_result(&mut self, matched: bool) -> Result<(), Error> {
+        let SearchStep::CompareThroughLine { line } = self.current_step() else {
+            return Err(Error::SearchAlreadyComplete);
+        };
+        if matched {
+            self.low = line + 1;
+        } else {
+            self.high = line;
+        }
+        Ok(())
     }
 }
 
