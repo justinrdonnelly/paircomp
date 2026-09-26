@@ -8,3 +8,6 @@ license.workspace = true
 [lib]
 name = "paircomp_core"
 path = "src/lib.rs"
+
+[dependencies]
+blake3 = "1.8.7"

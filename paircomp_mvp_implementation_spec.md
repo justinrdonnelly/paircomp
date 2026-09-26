@@ -357,9 +357,9 @@ Completion criteria: the workspace builds, the core can be built independently, 
 
 ### 13.2 File inspection and prefix hashing
 
-- [ ] Implement `FileInfo`, full-file BLAKE3 fingerprinting, and typed library errors.
-- [ ] Implement line counting and fingerprinting through line N with the exact raw-byte, terminator, line-0, and beyond-EOF semantics in section 6.1.
-- [ ] Add the hashing and line-semantics tests from section 11, including empty files, final-newline differences, CRLF, and invalid UTF-8.
+- [x] Implement `FileInfo`, full-file BLAKE3 fingerprinting, and typed library errors.
+- [x] Implement line counting and fingerprinting through line N with the exact raw-byte, terminator, line-0, and beyond-EOF semantics in section 6.1.
+- [x] Add the hashing and line-semantics tests from section 11, including empty files, final-newline differences, CRLF, and invalid UTF-8.
 
 Completion criteria: tests verify the expected metadata and exact bytes included in each prefix; expected file errors are returned without panics or core UI output.
 
