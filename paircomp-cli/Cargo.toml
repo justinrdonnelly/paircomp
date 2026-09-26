@@ -10,4 +10,5 @@ name = "paircomp"
 path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
 paircomp-core = { path = "../paircomp-core" }

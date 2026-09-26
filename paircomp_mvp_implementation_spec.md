@@ -373,9 +373,9 @@ Completion criteria: both simulated instances request the same line at every ste
 
 ### 13.4 CLI workflow
 
-- [ ] Implement the `clap` interface, regular-file validation, path handling, metadata output, and fingerprint formatting. Choose and document the displayed fingerprint length and any truncation's collision probability as required by section 5.
-- [ ] Implement whole-file comparison, collection of the other count, and prompts that drive the core search state. Include the file-stability notice, beyond-EOF result message, input rules, diagnostics, and exit statuses from sections 6 through 9.
-- [ ] Add focused argument-parsing and interaction tests from section 11, covering successful matches, localized differences, and invalid/aborted interactions.
+- [x] Implement the `clap` interface, regular-file validation, path handling, metadata output, and fingerprint formatting. Choose and document the displayed fingerprint length and any truncation's collision probability as required by section 5.
+- [x] Implement whole-file comparison, collection of the other count, and prompts that drive the core search state. Include the file-stability notice, beyond-EOF result message, input rules, diagnostics, and exit statuses from sections 6 through 9.
+- [x] Add focused argument-parsing and interaction tests from section 11, covering successful matches, localized differences, and invalid/aborted interactions.
 
 Completion criteria: `paircomp FILE`, `--help`, and `--version` work as specified; interaction tests verify exit statuses 0/1/2; the CLI contains no hashing or search calculations.
 
