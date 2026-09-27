@@ -1,5 +1,7 @@
 use clap::Parser;
-use paircomp_core::{fingerprint_through_line, inspect_file, Fingerprint, LineSearch, SearchStep};
+use paircomp_core::{
+    fingerprint_through_line, inspect_file, Fingerprint, LineSearch, LineSearchStep,
+};
 use std::fmt;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -96,7 +98,7 @@ fn run(
     let mut search = LineSearch::new(info.line_count, other_line_count)?;
     loop {
         match search.current_step() {
-            SearchStep::CompareThroughLine { line } => {
+            LineSearchStep::CompareThroughLine { line } => {
                 let fingerprint = fingerprint_through_line(path, line)?;
                 writeln!(output)?;
                 writeln!(output, "Compare through line {line}:")?;
@@ -104,7 +106,7 @@ fn run(
                 let matched = read_match(input, output, "Does this fingerprint match? [y/N] ")?;
                 search.record_result(matched)?;
             }
-            SearchStep::DifferenceAtLine { line } => {
+            LineSearchStep::DifferenceAtLine { line } => {
                 writeln!(output)?;
                 writeln!(output, "First divergence: line {line}")?;
                 if line > info.line_count {

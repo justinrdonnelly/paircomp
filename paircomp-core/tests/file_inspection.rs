@@ -1,6 +1,7 @@
 use paircomp_core::{
-    fingerprint_file, fingerprint_through_line, inspect_file, Error, Fingerprint, LineSearch,
-    SearchStep,
+    fingerprint_file, fingerprint_line_prefix, fingerprint_through_line, inspect_file,
+    inspect_line, utf8_character_position, ByteSearch, ByteSearchStep, Error, Fingerprint,
+    LineSearch, LineSearchStep,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -184,21 +185,21 @@ fn search_state_follows_midpoint_bounds_and_rejects_invalid_operations() {
     let mut search = LineSearch::new(4, 4).unwrap();
     assert_eq!(
         search.current_step(),
-        SearchStep::CompareThroughLine { line: 2 }
+        LineSearchStep::CompareThroughLine { line: 2 }
     );
     assert_eq!(
         search.current_step(),
-        SearchStep::CompareThroughLine { line: 2 }
-    );
-    search.record_result(true).unwrap();
-    assert_eq!(
-        search.current_step(),
-        SearchStep::CompareThroughLine { line: 3 }
+        LineSearchStep::CompareThroughLine { line: 2 }
     );
     search.record_result(true).unwrap();
     assert_eq!(
         search.current_step(),
-        SearchStep::DifferenceAtLine { line: 4 }
+        LineSearchStep::CompareThroughLine { line: 3 }
+    );
+    search.record_result(true).unwrap();
+    assert_eq!(
+        search.current_step(),
+        LineSearchStep::DifferenceAtLine { line: 4 }
     );
     assert!(matches!(
         search.record_result(false),
@@ -206,13 +207,13 @@ fn search_state_follows_midpoint_bounds_and_rejects_invalid_operations() {
     ));
     assert_eq!(
         search.current_step(),
-        SearchStep::DifferenceAtLine { line: 4 }
+        LineSearchStep::DifferenceAtLine { line: 4 }
     );
 
     let mut first_line = LineSearch::new(1, 0).unwrap();
     assert_eq!(
         first_line.current_step(),
-        SearchStep::DifferenceAtLine { line: 1 }
+        LineSearchStep::DifferenceAtLine { line: 1 }
     );
     assert!(matches!(
         first_line.record_result(true),
@@ -225,14 +226,14 @@ fn search_midpoint_does_not_overflow_at_maximum_line_count() {
     let mut search = LineSearch::new(0, u64::MAX).unwrap();
     assert_eq!(
         search.current_step(),
-        SearchStep::CompareThroughLine { line: 1 << 63 }
+        LineSearchStep::CompareThroughLine { line: 1 << 63 }
     );
     for _ in 0..63 {
         search.record_result(true).unwrap();
     }
     assert_eq!(
         search.current_step(),
-        SearchStep::DifferenceAtLine { line: u64::MAX }
+        LineSearchStep::DifferenceAtLine { line: u64::MAX }
     );
 }
 
@@ -252,13 +253,13 @@ fn paired_search(first_bytes: &[u8], second_bytes: &[u8]) -> Option<u64> {
         assert_eq!(first_step, first_search.current_step());
         assert_eq!(first_step, second_search.current_step());
         match first_step {
-            SearchStep::CompareThroughLine { line } => {
+            LineSearchStep::CompareThroughLine { line } => {
                 let matched = fingerprint_through_line(first.path(), line).unwrap()
                     == fingerprint_through_line(second.path(), line).unwrap();
                 first_search.record_result(matched).unwrap();
                 second_search.record_result(matched).unwrap();
             }
-            SearchStep::DifferenceAtLine { line } => return Some(line),
+            LineSearchStep::DifferenceAtLine { line } => return Some(line),
         }
     }
     panic!("paired searches did not terminate");
@@ -292,4 +293,262 @@ fn paired_instances_request_the_same_prefix_and_find_the_first_difference() {
 fn identical_files_complete_at_the_whole_file_comparison() {
     assert_eq!(paired_search(b"same\nbytes\n", b"same\nbytes\n"), None);
     assert_eq!(paired_search(b"", b""), None);
+}
+
+#[test]
+fn line_inspection_and_byte_prefixes_respect_line_boundaries() {
+    let fixture = Fixture::new(b"prior\nab\r\n\xff\nlast");
+    for (line, bytes) in [
+        (1, &b"prior\n"[..]),
+        (2, &b"ab\r\n"[..]),
+        (3, &b"\xff\n"[..]),
+        (4, &b"last"[..]),
+        (5, &b""[..]),
+        (u64::MAX, &b""[..]),
+    ] {
+        let info = inspect_line(fixture.path(), line).unwrap();
+        assert_eq!(
+            info.map(|info| info.byte_len),
+            (!bytes.is_empty()).then_some(bytes.len() as u64)
+        );
+        for count in [0, 1, 2, 3, 4, 5, 6, u64::MAX] {
+            let end = count.min(bytes.len() as u64) as usize;
+            assert_hash(
+                fingerprint_line_prefix(fixture.path(), line, count).unwrap(),
+                &bytes[..end],
+            );
+        }
+    }
+    for bytes in [&b""[..], &b"\n"[..], &b"a\n"[..], &b"a\r"[..]] {
+        let fixture = Fixture::new(bytes);
+        assert_eq!(
+            inspect_line(fixture.path(), 1)
+                .unwrap()
+                .map(|info| info.byte_len),
+            (!bytes.is_empty()).then_some(bytes.len() as u64)
+        );
+        assert_eq!(inspect_line(fixture.path(), 2).unwrap(), None);
+    }
+    assert!(matches!(
+        inspect_line(fixture.path(), 0),
+        Err(Error::InvalidLineNumber)
+    ));
+    assert!(matches!(
+        fingerprint_line_prefix(fixture.path(), 0, 0),
+        Err(Error::InvalidLineNumber)
+    ));
+    assert!(matches!(
+        utf8_character_position(fixture.path(), 0, 1),
+        Err(Error::InvalidLineNumber)
+    ));
+    assert!(matches!(
+        utf8_character_position(fixture.path(), 1, 0),
+        Err(Error::InvalidBytePosition)
+    ));
+    assert!(matches!(
+        utf8_character_position(fixture.path(), 1, 8),
+        Err(Error::InvalidBytePosition)
+    ));
+    assert!(matches!(
+        inspect_line(&fixture.dir, 1),
+        Err(Error::NotRegularFile)
+    ));
+    assert!(matches!(
+        fingerprint_line_prefix(&fixture.dir.join("missing"), 1, 0),
+        Err(Error::Io(_))
+    ));
+}
+
+#[test]
+fn byte_search_state_is_stable_checked_and_overflow_safe() {
+    assert!(matches!(
+        ByteSearch::new(0, 0),
+        Err(Error::EmptyLinesCannotDiffer)
+    ));
+    let mut search = ByteSearch::new(4, 7).unwrap();
+    assert_eq!(
+        search.current_step(),
+        ByteSearchStep::CompareThroughByte { byte: 4 }
+    );
+    assert_eq!(search.current_step(), search.current_step());
+    search.record_result(true).unwrap();
+    assert_eq!(
+        search.current_step(),
+        ByteSearchStep::CompareThroughByte { byte: 6 }
+    );
+    search.record_result(false).unwrap();
+    assert_eq!(
+        search.current_step(),
+        ByteSearchStep::CompareThroughByte { byte: 5 }
+    );
+    search.record_result(false).unwrap();
+    assert_eq!(
+        search.current_step(),
+        ByteSearchStep::DifferenceAtByte { byte: 5 }
+    );
+    assert!(matches!(
+        search.record_result(true),
+        Err(Error::SearchAlreadyComplete)
+    ));
+    assert_eq!(
+        search.current_step(),
+        ByteSearchStep::DifferenceAtByte { byte: 5 }
+    );
+
+    let mut single = ByteSearch::new(0, 1).unwrap();
+    assert_eq!(
+        single.current_step(),
+        ByteSearchStep::DifferenceAtByte { byte: 1 }
+    );
+    assert!(matches!(
+        single.record_result(false),
+        Err(Error::SearchAlreadyComplete)
+    ));
+    for matched in [false, true] {
+        let mut search = ByteSearch::new(0, u64::MAX).unwrap();
+        assert_eq!(
+            search.current_step(),
+            ByteSearchStep::CompareThroughByte { byte: 1 << 63 }
+        );
+        while matches!(
+            search.current_step(),
+            ByteSearchStep::CompareThroughByte { .. }
+        ) {
+            search.record_result(matched).unwrap();
+        }
+        assert_eq!(
+            search.current_step(),
+            ByteSearchStep::DifferenceAtByte {
+                byte: if matched { u64::MAX } else { 1 }
+            }
+        );
+    }
+}
+
+fn paired_byte_search(first: &[u8], second: &[u8], expected_line: u64, expected_byte: u64) {
+    let line = paired_search(first, second).unwrap();
+    assert_eq!(line, expected_line);
+    let first = Fixture::new(first);
+    let second = Fixture::new(second);
+    let first_len = inspect_line(first.path(), line)
+        .unwrap()
+        .map_or(0, |info| info.byte_len);
+    let second_len = inspect_line(second.path(), line)
+        .unwrap()
+        .map_or(0, |info| info.byte_len);
+    let mut a = ByteSearch::new(first_len, second_len).unwrap();
+    let mut b = ByteSearch::new(second_len, first_len).unwrap();
+    for _ in 0..64 {
+        let step = a.current_step();
+        assert_eq!(step, a.current_step());
+        assert_eq!(step, b.current_step());
+        match step {
+            ByteSearchStep::CompareThroughByte { byte } => {
+                let matched = fingerprint_line_prefix(first.path(), line, byte).unwrap()
+                    == fingerprint_line_prefix(second.path(), line, byte).unwrap();
+                a.record_result(matched).unwrap();
+                b.record_result(matched).unwrap();
+            }
+            ByteSearchStep::DifferenceAtByte { byte } => {
+                assert_eq!(byte, expected_byte);
+                return;
+            }
+        }
+    }
+    panic!("paired byte searches did not terminate");
+}
+
+#[test]
+fn paired_instances_find_first_differing_byte_after_line_search() {
+    for (a, b, line, byte) in [
+        (&b"abc\n"[..], &b"Xbc\n"[..], 1, 1),
+        (&b"abc\n"[..], &b"abX\n"[..], 1, 3),
+        (&b"abc\n"[..], &b"abXc\n"[..], 1, 3),
+        (&b"abc"[..], &b"abcd"[..], 1, 4),
+        (&b"abc"[..], &b"abc\n"[..], 1, 4),
+        (&b"abc\nnext\n"[..], &b"abc\r\nnext\n"[..], 1, 4),
+        (&b"\n"[..], &b"\r\n"[..], 1, 1),
+        (&b"same\n"[..], &b"same\nadded\n"[..], 2, 1),
+        (&b""[..], &b"nonempty"[..], 1, 1),
+        (&b"a\nsame\n"[..], &b"a\n\xffame\n"[..], 2, 1),
+        (&b"a\n\xff\x80"[..], &b"a\n\xff\x81"[..], 2, 2),
+        ("café".as_bytes(), "cafè".as_bytes(), 1, 5),
+        ("😀".as_bytes(), "😁".as_bytes(), 1, 4),
+        ("e\u{301}".as_bytes(), "e\u{300}".as_bytes(), 1, 3),
+    ] {
+        paired_byte_search(a, b, line, byte);
+        paired_byte_search(b, a, line, byte);
+    }
+    let mut a = b"same\n".to_vec();
+    a.extend(vec![b'x'; 20_000]);
+    let mut b = a.clone();
+    b[16_390] = b'y';
+    paired_byte_search(&a, &b, 2, 16_386);
+}
+
+#[test]
+fn character_positions_validate_whole_lines_and_count_code_points() {
+    let fixture = Fixture::new("earlier\ncafé😀e\u{301}\r\nlast".as_bytes());
+    for (byte, character) in [
+        (1, 1),
+        (4, 4),
+        (5, 4),
+        (6, 5),
+        (9, 5),
+        (10, 6),
+        (11, 7),
+        (12, 7),
+        (13, 8),
+        (14, 9),
+        (15, 10),
+    ] {
+        assert_eq!(
+            utf8_character_position(fixture.path(), 2, byte).unwrap(),
+            Some(character)
+        );
+    }
+    assert_eq!(
+        utf8_character_position(fixture.path(), 3, 5).unwrap(),
+        Some(5)
+    );
+    assert_eq!(utf8_character_position(fixture.path(), 4, 1).unwrap(), None);
+    for bytes in [
+        &b""[..],
+        &b"\xff"[..],
+        &b"a\xff"[..],
+        &b"\xc3"[..],
+        &b"\xc0\x80"[..],
+        &b"\xed\xa0\x80"[..],
+        &b"\xf4\x90\x80\x80"[..],
+        &b"\xc3\n"[..],
+    ] {
+        let fixture = Fixture::new(bytes);
+        assert_eq!(utf8_character_position(fixture.path(), 1, 1).unwrap(), None);
+        assert_eq!(
+            utf8_character_position(fixture.path(), 1, bytes.len() as u64 + 1).unwrap(),
+            None
+        );
+    }
+    // The character starts at the end of the read buffer and finishes in the next.
+    let mut bytes = vec![b'a'; 8191];
+    bytes.extend("😀\nnext".as_bytes());
+    let fixture = Fixture::new(&bytes);
+    for byte in 8192..=8195 {
+        assert_eq!(
+            utf8_character_position(fixture.path(), 1, byte).unwrap(),
+            Some(8192)
+        );
+    }
+    assert_eq!(
+        inspect_line(fixture.path(), 1).unwrap().unwrap().byte_len,
+        8196
+    );
+    assert_hash(
+        fingerprint_line_prefix(fixture.path(), 1, 8193).unwrap(),
+        &bytes[..8193],
+    );
+    assert_hash(
+        fingerprint_line_prefix(fixture.path(), 1, u64::MAX).unwrap(),
+        &bytes[..8196],
+    );
 }

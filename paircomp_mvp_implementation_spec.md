@@ -49,7 +49,8 @@ paircomp/
 │   └── src/
 │       ├── lib.rs
 │       ├── file.rs
-│       └── search.rs
+│       ├── search.rs
+│       └── within_line.rs
 └── paircomp-cli/
     ├── Cargo.toml
     └── src/
@@ -132,7 +133,7 @@ Illustrative API:
 ```rust
 pub struct LineSearch { /* bounds/state */ }
 
-pub enum SearchStep {
+pub enum LineSearchStep {
     CompareThroughLine { line: u64 },
     DifferenceAtLine { line: u64 },
 }
@@ -140,7 +141,7 @@ pub enum SearchStep {
 impl LineSearch {
     /// Construct only after the user reports a whole-file mismatch.
     pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error>;
-    pub fn current_step(&self) -> SearchStep;
+    pub fn current_step(&self) -> LineSearchStep;
     pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
 }
 ```
@@ -463,8 +464,8 @@ Completion criteria: required checks pass, documented usage matches the implemen
 
 ### 13.6 Optional within-line localization
 
-- [ ] Add line inspection, bounded line-prefix hashing, and separate byte-search state with the protocol in section 6.3.
-- [ ] Add UTF-8 code-point mapping with full-line validation and EOF/absence semantics from section 4.2.
+- [x] Add line inspection, bounded line-prefix hashing, and separate byte-search state with the protocol in section 6.3.
+- [x] Add UTF-8 code-point mapping with full-line validation and EOF/absence semantics from section 4.2.
 - [ ] Add the optional CLI workflow with default-yes continuation, byte-count exchange, typed results, and unchanged match-prompt defaults.
 - [ ] Add the within-line core and CLI tests from section 11, update project guidance and READMEs, and run the required verification checks.
 

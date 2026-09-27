@@ -76,15 +76,24 @@ pub fn fingerprint_file(path: &Path) -> Result<Fingerprint, Error> {
 /// Returns [`Error::Io`] if metadata lookup, opening, or reading fails,
 /// [`Error::NotRegularFile`] for a non-regular input, or
 /// [`Error::FileTooLarge`] if a byte or line count cannot fit in `u64`.
+///
+/// # Examples
+///
+/// See [`crate::fingerprint_line_prefix`] for an example comparing file prefixes
+/// with prefixes within a single line.
 pub fn fingerprint_through_line(path: &Path, line: u64) -> Result<Fingerprint, Error> {
     Ok(scan_file(path, Some(line))?.fingerprint)
 }
 
 fn scan_file(path: &Path, through_line: Option<u64>) -> Result<FileInfo, Error> {
+    scan_reader(open_regular_file(path)?, through_line)
+}
+
+pub(super) fn open_regular_file(path: &Path) -> Result<File, Error> {
     if !std::fs::metadata(path)?.is_file() {
         return Err(Error::NotRegularFile);
     }
-    scan_reader(File::open(path)?, through_line)
+    Ok(File::open(path)?)
 }
 
 fn scan_reader(mut reader: impl Read, through_line: Option<u64>) -> Result<FileInfo, Error> {
