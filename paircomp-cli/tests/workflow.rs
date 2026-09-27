@@ -74,7 +74,7 @@ fn help_version_and_argument_errors() {
 
     let version = Command::new(binary).arg("--version").output().unwrap();
     assert_eq!(version.status.code(), Some(0));
-    assert!(stdout(&version).contains("paircomp 0.1.0"));
+    assert!(stdout(&version).contains(concat!("paircomp ", env!("CARGO_PKG_VERSION"))));
 
     let missing = Command::new(binary).output().unwrap();
     assert_eq!(missing.status.code(), Some(2));
