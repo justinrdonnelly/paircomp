@@ -1,4 +1,16 @@
 //! Raw-byte file inspection, prefix fingerprinting, and line search for Paircomp.
+//!
+//! # File stability
+//!
+//! Each call to [`inspect_file`], [`fingerprint_file`], or
+//! [`fingerprint_through_line`] opens the supplied path afresh. The library does
+//! not snapshot files, lock them, or detect changes.
+//!
+//! Both files must remain unchanged from the start of the initial inspection
+//! until the comparison ends, including during reads and between calls. If
+//! either file is edited or replaced, discard the collected metadata,
+//! fingerprints, and [`LineSearch`] state, and restart both instances from the
+//! initial inspection.
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -96,6 +108,9 @@ pub enum SearchStep {
 /// Construct this only after the whole-file fingerprints have been reported
 /// as different. The caller supplies each instance's line count and the
 /// count reported by the other instance.
+///
+/// Line counts and comparison results must describe the same unchanged pair of
+/// files throughout the search. See the [file stability requirements](crate#file-stability).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LineSearch {
     low: u64,
@@ -188,6 +203,7 @@ impl LineSearch {
 ///
 /// Each call reopens the path. Keep the file unchanged throughout inspection
 /// and any subsequent comparison; restart after editing or replacing it.
+/// See the [file stability requirements](crate#file-stability).
 ///
 /// # Errors
 ///
@@ -223,6 +239,7 @@ pub fn inspect_file(path: &Path) -> Result<FileInfo, Error> {
 ///
 /// Each call reopens the path. Keep the file unchanged throughout inspection
 /// and any subsequent comparison; restart after editing or replacing it.
+/// See the [file stability requirements](crate#file-stability).
 ///
 /// # Errors
 ///
@@ -242,6 +259,7 @@ pub fn fingerprint_file(path: &Path) -> Result<Fingerprint, Error> {
 ///
 /// Each call reopens the path. Keep the file unchanged throughout inspection
 /// and any subsequent comparison; restart after editing or replacing it.
+/// See the [file stability requirements](crate#file-stability).
 ///
 /// # Errors
 ///
