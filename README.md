@@ -9,6 +9,8 @@ defines the comparison protocol and line semantics.
 
 ## Build and run
 
+The minimum supported Rust version is **1.98.1**.
+
 Build from the workspace root with Rust and Cargo:
 
 ```sh

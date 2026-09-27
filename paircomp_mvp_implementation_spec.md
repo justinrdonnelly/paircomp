@@ -35,6 +35,8 @@ Within-line byte/character localization is out of scope for the MVP. It is a kno
 
 Use a Cargo workspace or equivalent multi-crate layout. Prefer two crates from the beginning rather than putting the core logic in the binary crate.
 
+The minimum supported Rust version for both crates is 1.98.1.
+
 ```text
 paircomp/
 ├── Cargo.toml
