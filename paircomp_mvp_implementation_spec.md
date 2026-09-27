@@ -28,8 +28,10 @@ The same command is run against the corresponding file on both isolated systems.
 3. At each step, both instances must independently request comparison through the same line number and display a human-comparable fingerprint. A prefix that extends beyond the local EOF includes all available bytes.
 4. The user tells each instance whether the two displayed fingerprints match.
 5. When the search has isolated the first differing line, report its line number. If that line is beyond the local EOF, explain that the local file has no such line.
+6. Ask whether to continue within that line, defaulting to yes. Both instances must choose the same answer. If they decline, finish with the line result.
+7. When continuing, display the selected line's byte count, obtain the other instance's byte count, and bisect raw-byte prefixes of that line to locate the first differing byte. Report its 1-based byte position and, when the local line is valid UTF-8, its 1-based Unicode code-point position. Explain when the local byte is absent.
 
-Within-line byte/character localization is out of scope for the MVP. It is a known future enhancement; preserve the extension points described in section 4.2 without implementing it in v0.1.
+Optional within-line localization is included in v0.1. Hashing and localization remain byte based; character positions are supplementary annotations, with the exact semantics in sections 4.2 and 6.3.
 
 ## 3. Architecture: strict UI/library separation
 
@@ -56,7 +58,7 @@ paircomp/
 
 ### 3.1 `paircomp-core`
 
-A reusable Rust library. It owns file inspection, fingerprint generation, file-prefix calculations, and search-state logic.
+A reusable Rust library. It owns file inspection, fingerprint generation, file- and line-prefix calculations, both search states, and UTF-8 position mapping.
 
 It must contain:
 
@@ -147,17 +149,46 @@ This exact API is not required, but preserve the separation of responsibilities.
 
 Construction must reject a reported whole-file mismatch when both line counts are zero. Calling `current_step` must not advance the search; `record_result` applies an answer to the current comparison. Recording an answer after the search has completed must return an error. The core owns the bounds and transitions specified in section 6.
 
-### 4.2 Known future enhancement: within-line localization
+### 4.2 Within-line localization
 
-A future version may continue from `DifferenceAtLine` to locate the first differing byte within that line, with character-oriented presentation only where the encoding and character semantics are explicitly defined.
+After `DifferenceAtLine`, a frontend may start a separate `ByteSearch`. Keep the line result as typed data and all byte reading, line-boundary discovery, hashing, and character-position mapping in the core. Do not embed search arithmetic or UTF-8 decoding in the CLI, or introduce a general search framework.
 
-Design for this extension by keeping:
+The additional public API is:
 
-- the localized line number available as typed data, independent of CLI text;
-- byte reading, line-boundary discovery, and prefix hashing in the core, so a later operation can derive the local byte range for the reported line;
-- line-search state separate from prompting and result presentation, so a frontend can later start a separate within-line search using the line result.
+```rust
+pub struct LineInfo {
+    pub byte_len: u64,
+}
 
-The later extension must account for unequal line lengths and a line that is absent because the local file has ended. Do not assume that byte offsets and character positions are interchangeable. No within-line search implementation, unused public API, or general search framework is required for v0.1.
+pub fn inspect_line(path: &Path, line: u64) -> Result<Option<LineInfo>, Error>;
+pub fn fingerprint_line_prefix(
+    path: &Path,
+    line: u64,
+    byte_count: u64,
+) -> Result<Fingerprint, Error>;
+pub fn utf8_character_position(
+    path: &Path,
+    line: u64,
+    byte: u64,
+) -> Result<Option<u64>, Error>;
+
+pub struct ByteSearch { /* bounds/state */ }
+pub enum ByteSearchStep {
+    CompareThroughByte { byte: u64 },
+    DifferenceAtByte { byte: u64 },
+}
+impl ByteSearch {
+    pub fn new(local_byte_len: u64, other_byte_len: u64) -> Result<Self, Error>;
+    pub fn current_step(&self) -> ByteSearchStep;
+    pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
+}
+```
+
+All three line-local file operations require a 1-based line number; line zero returns an error. `inspect_line` returns `None` beyond EOF. Existing lines include LF when present and always have at least one byte. `fingerprint_line_prefix` hashes only the first `byte_count` bytes of the selected line, clamping to its end. Zero bytes or a missing line hashes the empty sequence; never include bytes from the next line or an EOF marker.
+
+`utf8_character_position` validates the entire selected line, returning `None` for invalid UTF-8 or a missing line. Every byte in a multibyte code point maps to that code point's 1-based position. Immediately after an existing valid UTF-8 line, return the next code-point position. Byte zero and positions farther than one past the line return an error. CR and LF each count as a code point. An absent line permits byte position 1 but has no character position. Do not normalize text or substitute replacement characters.
+
+Both searches require an established mismatch and unchanged files. Repeated `current_step` calls preserve state; answers after completion return an error. Byte search construction rejects two zero lengths. File operations reopen the path and use bounded buffers, including across split UTF-8 sequences, without loading an arbitrarily long line into memory.
 
 ## 5. Fingerprinting
 
@@ -192,7 +223,7 @@ Both instances must use the following protocol. Correct localization assumes unc
 5. Fingerprint bytes from the beginning of the local file through that line, including its terminator if present. If the local file ends before that line, hash the whole local file; do not fail, pad the input, or add an EOF marker to the hash.
 6. If the user reports a match, set `low = mid + 1`; otherwise set `high = mid`. Repeat from step 4.
 7. When `low == high`, return `DifferenceAtLine { line: low }` without requesting another comparison. The initial whole-file mismatch establishes the upper bound, including when it is line 1.
-8. Report the line number. If it exceeds the local line count, also report that the local file ends before this line. After the user repairs the file manually, Paircomp is simply rerun. Do not attempt synchronization or patching.
+8. Report the line number. If it exceeds the local line count, also report that the local file ends before this line. Offer the optional within-line search in section 6.3. After the user repairs the file manually, Paircomp is simply rerun. Do not attempt synchronization or patching.
 
 Using the maximum of the two counts makes the initial bounds identical on both systems regardless of which file is local. Beyond-EOF prefix behavior ensures that comparison at the initial upper bound would hash the entire file on each system. Matching prefixes exclude all lines through the midpoint; mismatching prefixes retain the midpoint as a candidate.
 
@@ -204,7 +235,7 @@ Using the maximum of the two counts makes the initial bounds identical on both s
 - The line count is the number of LF bytes, plus one if the file is nonempty and does not end in LF. An empty file has zero lines.
 - A request through line 0 hashes the empty byte sequence. A request through any line beyond EOF hashes the entire available file, including for an empty file.
 - Treat LF versus CRLF and the presence/absence of a final newline as real differences; do not normalize.
-- File-level hashing and line localization must work for arbitrary bytes without UTF-8 decoding. The MVP reports line numbers and does not need to display line contents. Any future content/character presentation must handle non-UTF-8 input explicitly rather than silently converting it lossily.
+- File-level hashing, line localization, and byte localization must work for arbitrary bytes without UTF-8 decoding. UTF-8 decoding is used only for the optional character annotation; omit that annotation for invalid UTF-8. Do not display line contents or convert them lossily.
 
 Examples use Rust byte-string notation:
 
@@ -224,6 +255,21 @@ For `b"a\n"` versus `b"a\nb\n"`, the first divergence is line 2; the shorter ins
 
 Both files must remain unchanged from initial inspection until the comparison session ends. Tell the user to keep them unchanged and restart Paircomp after any edit or replacement. The MVP may reread the file for each prefix and does not need to implement snapshots, locking, or reliable mutation detection. Results are only valid under this stability requirement; document it in the README as well.
 
+### 6.3 Within-line protocol and positions
+
+1. After reporting the differing line, ask `Continue within this line? [Y/n]`. Both instances must choose the same answer. Declining completes the comparison with status 1.
+2. When continuing, display the selected line's byte count, including any CR/LF. A missing line has count zero. Always ask for the other instance's count, even when it is equal or either line is absent. Accept a nonnegative decimal `u64`.
+3. Set `low = 1` and `high = max(local_byte_len, other_byte_len)`. Reject `high == 0` as an inconsistent mismatch. The line search establishes equal preceding lines and a differing selected line, supplying the differing upper bound without an additional fingerprint comparison.
+4. While `low < high`, request the line-local prefix through byte `mid = low + (high - low) / 2`. Hash from this line's beginning through the requested byte, clamping to the local line's end. An absent line hashes no bytes.
+5. On a match, set `low = mid + 1`; otherwise set `high = mid`. When the bounds meet, return `DifferenceAtByte { byte: low }` without another comparison.
+6. Report the line and 1-based byte position. If the local byte is absent, explain whether the local file ends before the line or the local line ends before the byte. Add the UTF-8 character position when available, as defined in section 4.2. Complete with status 1.
+
+Both instances therefore request the same byte positions and locate the same first differing byte, including unequal line lengths, insertion/deletion of bytes, and an absent line. Fingerprints in this stage include only the selected line's prefix, rather than the preceding lines. Correctness retains the assumptions of accurate counts, consistent answers, stable files, and no fingerprint collision.
+
+For UTF-8 `café` versus `cafè`, byte counts are both 5; comparisons through bytes 3 and 4 match, yielding byte 5 and character 4. For `b"a"` versus `b"a\n"`, the result is byte 2 and character 2 on both copies; the shorter copy explains that its byte is absent. For `b"a\r\n"` versus `b"a\n"`, the result is byte 2, comparing CR with LF. An absent line versus any existing line yields byte 1; only the existing line can have a character annotation.
+
+Character positions count Unicode code points, including CR and LF separately, rather than grapheme clusters or visual editor columns. Combining marks and some emoji contain multiple code points. Invalid UTF-8 anywhere in the selected local line suppresses the annotation even when the differing byte precedes the invalid sequence; other lines' encodings do not affect it.
+
 ## 7. CLI responsibilities
 
 Use `clap` with its derive API. The MVP surface should remain intentionally small:
@@ -241,7 +287,8 @@ The CLI should:
 - format returned metadata/fingerprints,
 - prompt for match/no-match answers,
 - obtain the other instance's line count after a whole-file mismatch,
-- drive the search state.
+- offer within-line continuation, then display and obtain the selected line's byte counts,
+- drive the two search states and format the byte result and optional character position.
 
 It should not implement hashing or midpoint/search calculations itself.
 
@@ -251,7 +298,8 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 
 - Match prompts accept `y`/`yes` and `n`/`no`, case-insensitively, after trimming surrounding whitespace.
 - The displayed `[y/N]` default means that a submitted blank or whitespace-only answer is `no`.
-- The other-line-count prompt has no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
+- The continuation prompt `[Y/n]` accepts the same answers but defaults to `yes` on a submitted blank or whitespace-only answer. Tell users to choose the same continuation answer on both copies.
+- The other-line-count and other-byte-count prompts have no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
 - Invalid answers or counts produce a diagnostic and terminate with status 2. The user must restart both instances to begin a new comparison session.
 - Stdin EOF is an aborted interaction and terminates with status 2. It must never be interpreted as a blank answer or a sequence of `no` answers.
 - A partial answer followed by EOF without a newline also aborts; only a newline submits a prompt answer.
@@ -282,6 +330,19 @@ Does this fingerprint match? [y/N] n
 ...
 
 First divergence: line 737
+Choose the same continuation answer on both copies.
+Continue within this line? [Y/n] y
+
+Line 737 size: 124 bytes (including any CR/LF)
+Byte count displayed for this line by the other copy: 124
+
+Compare line 737 through byte 62:
+Fingerprint: <fingerprint>
+Does this fingerprint match? [y/N] n
+
+...
+
+First divergence: line 737, byte 43 (UTF-8 character 43)
 
 Inspect/correct the corresponding files, then run paircomp again.
 ```
@@ -291,8 +352,8 @@ Inspect/correct the corresponding files, then run paircomp again.
 - Return library errors; do not print from `paircomp-core`.
 - CLI diagnostics go to stderr; normal interactive/output information goes to stdout.
 - Exit with status 0 when the user confirms a whole-file match, or for successful `--help`/`--version` output.
-- Exit with status 1 after successfully localizing and reporting a difference.
-- Exit with status 2 for invocation errors, I/O errors, or aborted/invalid interaction, including a reported mismatch between two empty files. A detected difference is a completed comparison, distinct from these errors.
+- Exit with status 1 after the user declines within-line continuation or successfully completes the byte search.
+- Exit with status 2 for invocation errors, I/O errors, or aborted/invalid interaction, including a reported mismatch between two empty files or two zero-length lines. EOF at the continuation prompt is an abort, not a choice to finish. A detected difference is a completed comparison, distinct from these errors.
 - Do not panic for expected user/file errors.
 - Keep the error model simple for v0.1; avoid adding a large error-handling dependency unless it provides clear value.
 
@@ -333,6 +394,14 @@ Include paired-state tests that simulate both isolated instances using two fixtu
 
 CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that a submitted blank match answer uses the `no` default, while stdin EOF and invalid input abort with status 2; a blank line-count answer is invalid. Do not duplicate core algorithm tests through the CLI.
 
+Within-line tests must also cover:
+
+- Exact byte prefixes, including byte zero, beyond-line requests, absent lines, LF and CRLF, and rejection of line zero for line-local operations.
+- Paired line and byte searches with swapped counts and actual fingerprints: first/last-byte changes, inserted/absent bytes, unequal lengths, added lines, empty files, missing final newlines, CRLF versus LF, and invalid UTF-8.
+- UTF-8 code-point mapping inside multibyte characters, emoji, combining marks, CR/LF, and immediately after a valid line. Validate the whole local line and omit annotations for absent or invalid UTF-8 lines. Reject zero or out-of-range byte coordinates.
+- Long lines and UTF-8 sequences across read-buffer boundaries; short and interrupted reads; propagated I/O errors; search-state stability, zero-length mismatch rejection, completion errors, and maximum `u64` bounds.
+- Focused CLI tests for default continuation, declining, byte-count exchange, unchanged match-prompt defaults, character annotations, local absence explanations, and invalid/aborted input at every new prompt. Include paired CLI sessions and verify that whole-file matches bypass both searches.
+
 ## 12. Explicit non-goals for v0.1
 
 - No networking or direct communication between Paircomp instances.
@@ -340,7 +409,7 @@ CLI tests should focus on argument parsing and a small number of end-to-end inte
 - No patch/delta generation or application.
 - No rsync-style synchronization.
 - No attempt to display a conventional two-file diff.
-- No within-line byte/character localization; this is a known future enhancement with the design requirements in section 4.2.
+- No grapheme-cluster or visual-column localization, non-UTF-8 character decoding, or line-content excerpts.
 - No directory-tree comparison.
 - No configuration file.
 - No selectable hash algorithms unless a concrete need appears.
@@ -372,7 +441,7 @@ Completion criteria: tests verify the expected metadata and exact bytes included
 
 - [x] Implement the core search state and exact bounds/transitions from sections 4.1 and 6, including unequal line counts and invalid state operations.
 - [x] Add the paired-instance tests from section 11, using actual prefix comparisons to drive both states.
-- [x] Preserve the typed line result and core byte operations needed for the future extension in section 4.2, without implementing within-line localization or unused APIs.
+- [x] Preserve the typed line result and core byte operations needed for the separate within-line search in section 4.2.
 
 Completion criteria: both simulated instances request the same line at every step, terminate at the expected first divergence, and handle all specified search edge cases without CLI involvement.
 
@@ -387,10 +456,19 @@ Completion criteria: `paircomp FILE`, `--help`, and `--version` work as specifie
 ### 13.5 Documentation and MVP verification
 
 - [x] Complete the README with build/run instructions, paired-instance usage, a comparison example, exit statuses, fingerprint limitations, and the requirement to restart after editing either file.
-- [x] Complete dependency/license notices and document the MVP scope, including within-line localization as a future enhancement.
+- [x] Complete dependency/license notices and document the MVP scope.
 - [x] Run the verification checks in `AGENTS.md` and review the implementation against every requirement in section 11 and the definition of done in section 14. Exercise the workflow with two separate instances, each opening only its own file, for both matching and differing fixtures, including unequal line counts.
 
 Completion criteria: required checks pass, documented usage matches the implemented behavior, and the definition of done is satisfied. Record verification results and any remaining limitations in the handoff; leave incomplete checklist items unchecked.
+
+### 13.6 Optional within-line localization
+
+- [ ] Add line inspection, bounded line-prefix hashing, and separate byte-search state with the protocol in section 6.3.
+- [ ] Add UTF-8 code-point mapping with full-line validation and EOF/absence semantics from section 4.2.
+- [ ] Add the optional CLI workflow with default-yes continuation, byte-count exchange, typed results, and unchanged match-prompt defaults.
+- [ ] Add the within-line core and CLI tests from section 11, update project guidance and READMEs, and run the required verification checks.
+
+Completion criteria: both instances deterministically locate the first differing byte when continuing, character annotations match the specified UTF-8 semantics, and users can still finish at the line. All required checks pass.
 
 ## 14. Definition of done for the MVP
 
@@ -398,8 +476,8 @@ On two systems containing corresponding files, a user can run `paircomp FILE` on
 
 If the files are identical, the user can establish that immediately by comparing the whole-file fingerprints.
 
-If they differ, entering the other instance's line count on each system and following the same match/no-match answers deterministically guides the user to the first differing line, including when the counts differ or one file is empty. Both files must remain unchanged during the session.
+If they differ, entering the other instance's line count on each system and following the same match/no-match answers deterministically guides the user to the first differing line, including when the counts differ or one file is empty. Users can stop at that line or continue by exchanging its byte counts and comparing line-prefix fingerprints to locate the first differing byte. Both files must remain unchanged during the session.
 
 The core functionality is exposed by `paircomp-core` with no dependency on `clap`, stdin/stdout, or terminal UI, and the CLI is a thin frontend over that API.
 
-The MVP ends at line-level localization. Its typed result and separation of byte operations, search state, and UI permit later within-line localization without implementing that enhancement now.
+The MVP supports both line-level and optional within-line localization. Byte results work for arbitrary contents, and valid UTF-8 lines also receive Unicode code-point positions. Both search states and position mapping remain reusable independently of the CLI.

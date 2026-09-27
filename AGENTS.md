@@ -4,11 +4,11 @@ These instructions apply throughout this repository.
 
 ## Project and scope
 
-Paircomp is a Rust utility for manually comparing files on isolated systems and locating their first differing line using prefix fingerprints.
+Paircomp is a Rust utility for manually comparing files on isolated systems and locating their first differing line and, optionally, byte within that line using prefix fingerprints.
 
 Read [paircomp_mvp_implementation_spec.md](paircomp_mvp_implementation_spec.md) before implementation. It is the source of truth for product behavior, architecture, the comparison protocol, edge cases, and acceptance criteria. Follow the user's current task within that design; the presence of the spec is not a request to implement every remaining feature at once. Keep the spec consistent with intentional behavior changes.
 
-Within-line localization is a known future enhancement, outside the MVP. Preserve the extension points described in the spec without adding unused APIs or implementing the enhancement early.
+Within-line localization is part of v0.1. Search raw-byte prefixes and report a UTF-8 code-point position only when the selected local line is valid UTF-8. Keep line and byte search state frontend-neutral; avoid unused APIs or a general search framework.
 
 ## Implementation principles
 
