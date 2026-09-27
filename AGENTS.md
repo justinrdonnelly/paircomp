@@ -45,7 +45,7 @@ For documentation-only changes, review consistency and run `git diff --check`; C
 
 Use small, focused commits. Each commit should represent one coherent change, with its directly related tests and documentation, and be understandable and reviewable on its own. Do not split a change so finely that intermediate commits are needlessly broken.
 
-Use a concise, descriptive subject and a thorough body. Explain the problem or motivation, what changed and why, relevant design decisions or tradeoffs, and how the change was verified. Scale the explanation to the change; avoid generic filler and file-by-file narration.
+Use a concise, descriptive subject and a thorough body. Explain the problem or motivation, what changed and why, relevant design decisions or tradeoffs. Scale the explanation to the change; avoid generic filler and file-by-file narration.
 
 The required committer identity is:
 
