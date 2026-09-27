@@ -466,8 +466,8 @@ Completion criteria: required checks pass, documented usage matches the implemen
 
 - [x] Add line inspection, bounded line-prefix hashing, and separate byte-search state with the protocol in section 6.3.
 - [x] Add UTF-8 code-point mapping with full-line validation and EOF/absence semantics from section 4.2.
-- [ ] Add the optional CLI workflow with default-yes continuation, byte-count exchange, typed results, and unchanged match-prompt defaults.
-- [ ] Add the within-line core and CLI tests from section 11, update project guidance and READMEs, and run the required verification checks.
+- [x] Add the optional CLI workflow with default-yes continuation, byte-count exchange, typed results, and unchanged match-prompt defaults.
+- [x] Add the within-line core and CLI tests from section 11, update project guidance and READMEs, and run the required verification checks.
 
 Completion criteria: both instances deterministically locate the first differing byte when continuing, character annotations match the specified UTF-8 semantics, and users can still finish at the line. All required checks pass.
 

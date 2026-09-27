@@ -111,7 +111,7 @@ fn confirmed_whole_file_match_exits_successfully() {
 #[test]
 fn equal_counts_follow_core_search_and_report_a_difference() {
     let fixture = Fixture::new(b"a\nb\nlocal\nd\n");
-    let output = invoke(fixture.path(), "n\n 4 \ny\n \n");
+    let output = invoke(fixture.path(), "n\n 4 \ny\n \nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(text.contains("Line count displayed by the other copy: "));
@@ -128,13 +128,15 @@ fn equal_counts_follow_core_search_and_report_a_difference() {
     )));
     assert!(text.contains("First divergence: line 3"));
     assert!(!text.contains("local file ends before"));
+    assert!(text.contains("Continue within this line? [Y/n]"));
+    assert!(!text.contains("Byte count displayed"));
     assert!(output.stderr.is_empty());
 }
 
 #[test]
 fn blank_answer_uses_no_default_and_beyond_eof_is_reported() {
     let fixture = Fixture::new(b"a\n");
-    let output = invoke(fixture.path(), "  \n2\ny\n");
+    let output = invoke(fixture.path(), "  \n2\ny\nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(text.contains("Compare through line 1:"));
@@ -146,7 +148,7 @@ fn blank_answer_uses_no_default_and_beyond_eof_is_reported() {
 #[test]
 fn empty_file_can_localize_a_nonempty_other_file() {
     let fixture = Fixture::new(b"");
-    let output = invoke(fixture.path(), "no\n1\n");
+    let output = invoke(fixture.path(), "no\n1\nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(text.contains("Lines: 0"));
@@ -158,7 +160,7 @@ fn empty_file_can_localize_a_nonempty_other_file() {
 #[test]
 fn zero_other_line_count_is_valid_for_a_nonempty_local_file() {
     let fixture = Fixture::new(b"a\n");
-    let output = invoke(fixture.path(), "no\n0\n");
+    let output = invoke(fixture.path(), "no\n0\nn\n");
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).contains("First divergence: line 1"));
     assert!(output.stderr.is_empty());
@@ -226,4 +228,108 @@ fn non_utf8_file_path_is_accepted() {
     let output = invoke(&path, "yes\n");
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout(&output).contains("Files match."));
+}
+
+#[test]
+fn paired_cli_instances_default_to_continuing_and_find_utf8_character() {
+    let first = Fixture::new("same\ncafé".as_bytes());
+    let second = Fixture::new("same\ncafè".as_bytes());
+    let first_output = invoke(first.path(), "n\n2\ny\n \n 5 \ny\ny\n");
+    let second_output = invoke(second.path(), "n\n2\ny\n \n 5 \ny\ny\n");
+    for output in [&first_output, &second_output] {
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let text = stdout(output);
+        assert!(text.contains("Line 2 size: 5 bytes (including any CR/LF)"));
+        assert!(text.contains("Byte count displayed for this line by the other copy:"));
+        assert!(text.contains("Compare line 2 through byte 3:"));
+        assert!(text.contains("Compare line 2 through byte 4:"));
+        assert!(text.contains("First divergence: line 2, byte 5 (UTF-8 character 4)"));
+    }
+    // The whole files differ, but all three subsequent prefix comparisons match.
+    let fingerprints = |output: &Output| {
+        stdout(output)
+            .lines()
+            .filter(|line| line.starts_with("Fingerprint:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let first_hashes = fingerprints(&first_output);
+    let second_hashes = fingerprints(&second_output);
+    assert_eq!(first_hashes.len(), 4);
+    assert_ne!(first_hashes[0], second_hashes[0]);
+    assert_eq!(first_hashes[1..], second_hashes[1..]);
+}
+
+#[test]
+fn paired_cli_handles_a_missing_final_newline_and_an_absent_line() {
+    let short = Fixture::new(b"a");
+    let long = Fixture::new(b"a\n");
+    let short_output = invoke(short.path(), "n\n1\n YES \n2\ny\n");
+    let long_output = invoke(long.path(), "n\n1\ny\n1\ny\n");
+    for output in [&short_output, &long_output] {
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        assert!(stdout(output).contains("First divergence: line 1, byte 2 (UTF-8 character 2)"));
+    }
+    assert!(
+        stdout(&short_output).contains("The local line ends before byte 2; this byte is absent.")
+    );
+    assert!(!stdout(&long_output).contains("this byte is absent"));
+
+    let short = Fixture::new(b"a\n");
+    let long = Fixture::new(b"a\nb\n");
+    let short_output = invoke(short.path(), "n\n2\ny\ny\n2\n\n");
+    let long_output = invoke(long.path(), "n\n1\ny\ny\n0\n\n");
+    for output in [&short_output, &long_output] {
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        assert!(stdout(output).contains("Compare line 2 through byte 1:"));
+        assert!(stdout(output).contains("First divergence: line 2, byte 1"));
+    }
+    assert!(stdout(&short_output).contains("Line 2 size: 0 bytes"));
+    assert!(
+        stdout(&short_output).contains("The local file ends before line 2; this byte is absent.")
+    );
+    assert!(!stdout(&short_output).contains("UTF-8 character"));
+    assert!(stdout(&long_output).contains("(UTF-8 character 1)"));
+}
+
+#[test]
+fn invalid_utf8_reports_only_the_byte_position() {
+    let fixture = Fixture::new(b"a\xff");
+    let output = invoke(fixture.path(), "n\n1\ny\n2\ny\n");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert!(stdout(&output).contains("First divergence: line 1, byte 2\n"));
+    assert!(!stdout(&output).contains("UTF-8 character"));
+}
+
+#[test]
+fn invalid_or_aborted_within_line_input_is_an_error() {
+    let fixture = Fixture::new(b"ab");
+    for (answers, diagnostic) in [
+        ("n\n1\n", "input ended"),
+        ("n\n1\ny", "input ended"),
+        ("n\n1\nmaybe\n", "invalid answer"),
+        ("n\n1\n\n", "input ended"),
+        ("n\n1\ny\n2", "input ended"),
+        ("n\n1\ny\n\n", "invalid byte count"),
+        ("n\n1\ny\n-1\n", "invalid byte count"),
+        ("n\n1\ny\n+2\n", "invalid byte count"),
+        ("n\n1\ny\n1.5\n", "invalid byte count"),
+        ("n\n1\ny\n18446744073709551616\n", "invalid byte count"),
+        ("n\n1\ny\n2\n", "input ended"),
+        ("n\n1\ny\n2\ny", "input ended"),
+        ("n\n1\ny\n2\nmaybe\n", "invalid answer"),
+    ] {
+        let output = invoke(fixture.path(), answers);
+        assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
+        assert!(stderr(&output).contains(diagnostic), "answers: {answers:?}");
+        assert!(!stdout(&output).contains("First divergence: line 1, byte"));
+    }
+    let empty = Fixture::new(b"");
+    let output = invoke(empty.path(), "n\n1\ny\n0\n");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("two zero-length lines cannot differ"));
 }

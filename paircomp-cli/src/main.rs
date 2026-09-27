@@ -1,6 +1,7 @@
 use clap::Parser;
 use paircomp_core::{
-    fingerprint_through_line, inspect_file, Fingerprint, LineSearch, LineSearchStep,
+    fingerprint_line_prefix, fingerprint_through_line, inspect_file, inspect_line,
+    utf8_character_position, ByteSearch, ByteSearchStep, Fingerprint, LineSearch, LineSearchStep,
 };
 use std::fmt;
 use std::io::{self, BufRead, Write};
@@ -25,6 +26,7 @@ enum WorkflowError {
     Aborted,
     InvalidAnswer,
     InvalidLineCount,
+    InvalidByteCount,
 }
 
 impl fmt::Display for WorkflowError {
@@ -36,6 +38,9 @@ impl fmt::Display for WorkflowError {
             Self::InvalidAnswer => f.write_str("invalid answer; enter y, yes, n, or no"),
             Self::InvalidLineCount => {
                 f.write_str("invalid line count; enter a nonnegative decimal u64")
+            }
+            Self::InvalidByteCount => {
+                f.write_str("invalid byte count; enter a nonnegative decimal u64")
             }
         }
     }
@@ -64,6 +69,9 @@ fn main() -> ExitCode {
     }
 }
 
+/// Drives a comparison session, returning status 0 for a match or 1 for a difference.
+///
+/// Failed or aborted interactions return an error for `main` to report with status 2.
 fn run(
     path: &Path,
     input: &mut impl BufRead,
@@ -94,7 +102,12 @@ fn run(
         return Ok(ExitCode::SUCCESS);
     }
 
-    let other_line_count = read_line_count(input, output)?;
+    let other_line_count = read_count(
+        input,
+        output,
+        "Line count displayed by the other copy: ",
+        WorkflowError::InvalidLineCount,
+    )?;
     let mut search = LineSearch::new(info.line_count, other_line_count)?;
     loop {
         match search.current_step() {
@@ -112,6 +125,13 @@ fn run(
                 if line > info.line_count {
                     writeln!(output, "The local file ends before line {line}.")?;
                 }
+                writeln!(
+                    output,
+                    "Choose the same continuation answer on both copies."
+                )?;
+                if read_yes_no(input, output, "Continue within this line? [Y/n] ", true)? {
+                    localize_byte(path, line, input, output)?;
+                }
                 writeln!(output)?;
                 writeln!(
                     output,
@@ -123,6 +143,65 @@ fn run(
     }
 }
 
+/// Drives the optional byte search within the first differing line.
+///
+/// The line search must already have established that preceding lines match.
+fn localize_byte(
+    path: &Path,
+    line: u64,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<(), WorkflowError> {
+    let local = inspect_line(path, line)?;
+    let local_byte_len = local.map_or(0, |info| info.byte_len);
+    writeln!(output)?;
+    writeln!(
+        output,
+        "Line {line} size: {local_byte_len} bytes (including any CR/LF)"
+    )?;
+    let other_byte_len = read_count(
+        input,
+        output,
+        "Byte count displayed for this line by the other copy: ",
+        WorkflowError::InvalidByteCount,
+    )?;
+    let mut search = ByteSearch::new(local_byte_len, other_byte_len)?;
+    loop {
+        match search.current_step() {
+            ByteSearchStep::CompareThroughByte { byte } => {
+                let fingerprint = fingerprint_line_prefix(path, line, byte)?;
+                writeln!(output)?;
+                writeln!(output, "Compare line {line} through byte {byte}:")?;
+                writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
+                let matched = read_match(input, output, "Does this fingerprint match? [y/N] ")?;
+                search.record_result(matched)?;
+            }
+            ByteSearchStep::DifferenceAtByte { byte } => {
+                let character = utf8_character_position(path, line, byte)?;
+                writeln!(output)?;
+                write!(output, "First divergence: line {line}, byte {byte}")?;
+                if let Some(character) = character {
+                    write!(output, " (UTF-8 character {character})")?;
+                }
+                writeln!(output)?;
+                if local.is_none() {
+                    writeln!(
+                        output,
+                        "The local file ends before line {line}; this byte is absent."
+                    )?;
+                } else if byte > local_byte_len {
+                    writeln!(
+                        output,
+                        "The local line ends before byte {byte}; this byte is absent."
+                    )?;
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Formats the full digest as 64 lowercase hexadecimal digits without truncation.
 fn format_fingerprint(fingerprint: Fingerprint) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut formatted = String::with_capacity(64);
@@ -133,6 +212,10 @@ fn format_fingerprint(fingerprint: Fingerprint) -> String {
     formatted
 }
 
+/// Flushes a prompt and reads an answer, retaining its terminating newline.
+///
+/// Only a newline submits an answer. EOF, including after partial input, aborts
+/// the session so that it cannot silently select a prompt's default.
 fn read_prompt(
     input: &mut impl BufRead,
     output: &mut impl Write,
@@ -153,9 +236,24 @@ fn read_match(
     output: &mut impl Write,
     prompt: &str,
 ) -> Result<bool, WorkflowError> {
+    read_yes_no(input, output, prompt, false)
+}
+
+/// Reads a trimmed, case-insensitive yes/no answer with a caller-selected default.
+///
+/// The default applies only to a submitted blank answer; the caller's prompt
+/// must display the corresponding `[y/N]` or `[Y/n]` choice.
+fn read_yes_no(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    prompt: &str,
+    default: bool,
+) -> Result<bool, WorkflowError> {
     let answer = read_prompt(input, output, prompt)?;
     let answer = answer.trim();
-    if answer.is_empty() || answer.eq_ignore_ascii_case("n") || answer.eq_ignore_ascii_case("no") {
+    if answer.is_empty() {
+        Ok(default)
+    } else if answer.eq_ignore_ascii_case("n") || answer.eq_ignore_ascii_case("no") {
         Ok(false)
     } else if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
         Ok(true)
@@ -164,14 +262,20 @@ fn read_match(
     }
 }
 
-fn read_line_count(
+/// Reads a decimal `u64`, rejecting blank input, signs, and overflow.
+///
+/// Surrounding whitespace is ignored. Malformed input returns `invalid`, allowing
+/// the caller to distinguish line-count and byte-count diagnostics.
+fn read_count(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    prompt: &str,
+    invalid: WorkflowError,
 ) -> Result<u64, WorkflowError> {
-    let answer = read_prompt(input, output, "Line count displayed by the other copy: ")?;
+    let answer = read_prompt(input, output, prompt)?;
     let answer = answer.trim();
     if answer.is_empty() || !answer.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(WorkflowError::InvalidLineCount);
+        return Err(invalid);
     }
-    answer.parse().map_err(|_| WorkflowError::InvalidLineCount)
+    answer.parse().map_err(|_| invalid)
 }
