@@ -45,7 +45,9 @@ paircomp/
 ├── paircomp-core/
 │   ├── Cargo.toml
 │   └── src/
-│       └── lib.rs
+│       ├── lib.rs
+│       ├── file.rs
+│       └── search.rs
 └── paircomp-cli/
     ├── Cargo.toml
     └── src/
