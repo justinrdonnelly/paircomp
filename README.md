@@ -12,7 +12,7 @@ defines the comparison protocol and line semantics.
 Build from the workspace root with Rust and Cargo:
 
 ```sh
-cargo build --release -p paircomp-cli
+cargo build --release -p paircomp
 ```
 
 Run the resulting binary on each system against the corresponding local file:
@@ -21,7 +21,7 @@ Run the resulting binary on each system against the corresponding local file:
 target/release/paircomp FILE
 ```
 
-For a development run, use `cargo run -p paircomp-cli -- FILE`. The binary is
+For a development run, use `cargo run -p paircomp -- FILE`. The binary is
 named `paircomp`; it also supports `--help` and `--version`. `FILE` must be a
 readable regular file. File contents may contain arbitrary bytes; UTF-8 is not
 required.
@@ -92,13 +92,13 @@ operations for that purpose. The MVP has no networking, file transfer,
 automatic repair, directory comparison, or GUI.
 
 `paircomp-core` owns file inspection, raw-byte hashing, and line-search state.
-`paircomp-cli` handles arguments and the interactive prompts. Paircomp's own
+`paircomp` handles arguments and the interactive prompts. Paircomp's own
 code is licensed [MPL-2.0](COPYING). Its direct third-party dependencies are:
 
 | Dependency (locked version) | Used by | Purpose | License |
 |---|---|---|---|
 | [`blake3` 1.8.7](https://github.com/BLAKE3-team/BLAKE3) | `paircomp-core` | Full-file and line-prefix fingerprints | [CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception](https://docs.rs/crate/blake3/1.8.7/source/Cargo.toml.orig) |
-| [`clap` 4.6.7](https://github.com/clap-rs/clap) with `derive` | `paircomp-cli` | Parse the file argument and provide help/version output | [MIT OR Apache-2.0](https://docs.rs/crate/clap/4.6.7/source/Cargo.toml.orig) |
+| [`clap` 4.6.7](https://github.com/clap-rs/clap) with `derive` | `paircomp` | Parse the file argument and provide help/version output | [MIT OR Apache-2.0](https://docs.rs/crate/clap/4.6.7/source/Cargo.toml.orig) |
 
 The exact dependency versions, including transitive packages, are recorded in
 [`Cargo.lock`](Cargo.lock). The license expressions above are from the locked

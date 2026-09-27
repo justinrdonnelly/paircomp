@@ -64,7 +64,7 @@ It must contain:
 
 It should return typed data/results and errors to its caller.
 
-### 3.2 `paircomp-cli`
+### 3.2 `paircomp` (in `paircomp-cli/`)
 
 A thin CLI frontend. It owns:
 
@@ -301,7 +301,7 @@ Dependencies may use compatible permissive licenses. Before adding any dependenc
 | Dependency | Crate | Purpose |
 |---|---|---|
 | `blake3` | `paircomp-core` | BLAKE3 fingerprinting |
-| `clap` with `derive` | `paircomp-cli` | CLI parsing/help/version |
+| `clap` with `derive` | `paircomp` | CLI parsing/help/version |
 
 ## 11. Testing requirements
 
@@ -350,7 +350,7 @@ Work through these milestones in order, marking items complete after the corresp
 
 ### 13.1 Foundation
 
-- [x] Create the Cargo workspace with `paircomp-core` and `paircomp-cli`, with the CLI depending on the core and exposing a binary named `paircomp`.
+- [x] Create the Cargo workspace with `paircomp-core` and the `paircomp` CLI package, with the CLI depending on the core and exposing a binary named `paircomp`.
 - [x] Configure package/version/license metadata and use the existing `COPYING` license file.
 - [x] Establish a buildable crate structure that preserves the architecture in section 3. Add dependencies only as they are needed, verifying and documenting their licenses and purpose at that time.
 

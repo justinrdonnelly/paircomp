@@ -13,7 +13,7 @@ Within-line localization is a known future enhancement, outside the MVP. Preserv
 ## Implementation principles
 
 - Keep file inspection, hashing, line boundaries, and search state in `paircomp-core`. The core must not depend on `clap`, terminal interaction, or UI output.
-- Keep `paircomp-cli` focused on arguments, prompts, formatting, and driving the core API. Do not duplicate search logic in the CLI.
+- Keep the `paircomp` CLI crate focused on arguments, prompts, formatting, and driving the core API. Do not duplicate search logic in the CLI.
 - Compare raw bytes. Follow the spec's exact line, newline, and EOF semantics; do not normalize content or require UTF-8 to hash or localize differences.
 - Prefer straightforward Rust, typed results, and small abstractions. Return errors for expected failures instead of panicking. Avoid speculative frameworks and optimizations.
 - Keep dependencies small. Before adding one, verify its current license against the spec's requirements and record its purpose and license in the project's dependency documentation.
