@@ -113,8 +113,7 @@ pub enum SearchStep {
 /// files throughout the search. See the [file stability requirements](crate#file-stability).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LineSearch {
-    low: u64,
-    high: u64,
+    bounds: SearchBounds,
 }
 
 impl LineSearch {
@@ -147,11 +146,9 @@ impl LineSearch {
     /// # Ok::<(), paircomp_core::Error>(())
     /// ```
     pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error> {
-        let high = local_line_count.max(other_line_count);
-        if high == 0 {
-            return Err(Error::EmptyFilesCannotDiffer);
-        }
-        Ok(Self { low: 1, high })
+        let bounds = SearchBounds::new(local_line_count.max(other_line_count))
+            .ok_or(Error::EmptyFilesCannotDiffer)?;
+        Ok(Self { bounds })
     }
 
     /// Returns the next prefix comparison or the completed line result.
@@ -161,12 +158,11 @@ impl LineSearch {
     /// candidate remains, returns [`SearchStep::DifferenceAtLine`] without
     /// requesting another comparison.
     pub fn current_step(&self) -> SearchStep {
-        if self.low == self.high {
-            SearchStep::DifferenceAtLine { line: self.low }
-        } else {
-            SearchStep::CompareThroughLine {
-                line: self.low + (self.high - self.low) / 2,
-            }
+        match self.bounds.midpoint() {
+            Some(line) => SearchStep::CompareThroughLine { line },
+            None => SearchStep::DifferenceAtLine {
+                line: self.bounds.low,
+            },
         }
     }
 
@@ -182,13 +178,37 @@ impl LineSearch {
     /// Returns [`Error::SearchAlreadyComplete`] if the result is already known.
     /// An error leaves the search unchanged.
     pub fn record_result(&mut self, matched: bool) -> Result<(), Error> {
-        let SearchStep::CompareThroughLine { line } = self.current_step() else {
-            return Err(Error::SearchAlreadyComplete);
-        };
+        self.bounds.record_result(matched)
+    }
+}
+
+/// Inclusive candidate bounds for prefix bisection.
+///
+/// Maintains `1 <= low <= high`. Given an initial mismatch and consistent
+/// answers, prefixes before `low` match and the prefix through `high` differs.
+/// This lets the search finish at `low == high` without another comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SearchBounds {
+    low: u64,
+    high: u64,
+}
+
+impl SearchBounds {
+    fn new(high: u64) -> Option<Self> {
+        (high > 0).then_some(Self { low: 1, high })
+    }
+
+    /// A completed search has no midpoint; `low` is its result.
+    fn midpoint(&self) -> Option<u64> {
+        (self.low < self.high).then(|| self.low + (self.high - self.low) / 2)
+    }
+
+    fn record_result(&mut self, matched: bool) -> Result<(), Error> {
+        let midpoint = self.midpoint().ok_or(Error::SearchAlreadyComplete)?;
         if matched {
-            self.low = line + 1;
+            self.low = midpoint + 1;
         } else {
-            self.high = line;
+            self.high = midpoint;
         }
         Ok(())
     }
