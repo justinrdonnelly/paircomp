@@ -4,14 +4,15 @@ Paircomp helps a person compare two copies of a file on isolated systems. Each
 system runs its own instance and opens only its local file. The instances display
 fingerprints for the person to compare; they do not communicate with each other.
 If the whole-file fingerprints differ, Paircomp guides both instances to the
-first differing line. The [MVP specification](paircomp_mvp_implementation_spec.md)
+first differing line. The [MVP specification](https://github.com/justinrdonnelly/paircomp/blob/main/paircomp_mvp_implementation_spec.md)
 defines the comparison protocol and line semantics.
 
 ## Build and run
 
 The minimum supported Rust version is **1.98.1**.
 
-Build from the workspace root with Rust and Cargo:
+Build from the workspace root or the unpacked `paircomp` crate directory with
+Rust and Cargo:
 
 ```sh
 cargo build --release -p paircomp

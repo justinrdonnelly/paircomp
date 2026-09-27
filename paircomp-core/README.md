@@ -14,4 +14,4 @@ create an extra line. A prefix request beyond the local end of file fingerprints
 all available bytes. The caller compares fingerprints from the two systems and
 feeds each match result to the search state.
 
-Licensed under MPL-2.0.
+Licensed under [MPL-2.0](COPYING).
