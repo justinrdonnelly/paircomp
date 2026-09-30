@@ -47,17 +47,14 @@ Use small, focused commits. Each commit should represent one coherent change, wi
 
 Use a concise, descriptive subject and a thorough body. Explain the problem or motivation, what changed and why, relevant design decisions or tradeoffs. Scale the explanation to the change; avoid generic filler and file-by-file narration.
 
-The required committer identity is:
-
-- Name: `Justin Donnelly`
-- Email: `justinrdonnelly@gmail.com`
+Use the name and email of the person responsible for the commit as the committer identity. Determine that identity from the user's instructions or Git configuration when it clearly identifies the responsible contributor. If the identity is missing or ambiguous, ask the user for the name and email to use before committing. Do not assume the repository owner's identity applies to other contributors.
 
 Use the same identity as the author of new commits. When amending, rebasing, or cherry-picking existing commits, preserve their original author unless the user requests otherwise. Set identity for the commit command rather than changing global Git configuration, and verify the resulting author and committer metadata.
 
-For example:
+For example, replacing the placeholders with the responsible contributor's identity:
 
 ```sh
-git -c user.name="Justin Donnelly" -c user.email="justinrdonnelly@gmail.com" commit
+git -c user.name="Contributor Name" -c user.email="contributor@example.com" commit
 ```
 
 Every AI-assisted commit must include an `Assisted-by` trailer identifying the AI tool/model actually used, separated from the body by a blank line. For example, when the assisting model is GPT-6-Astra:
