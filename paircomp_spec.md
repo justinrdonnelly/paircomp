@@ -302,10 +302,10 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 ### 7.1 Prompt input
 
 - Match prompts accept `y`/`yes` and `n`/`no`, case-insensitively, after trimming surrounding whitespace.
-- Whole-file, line-prefix, and byte-prefix match prompts display `[y/n]` and have no default. A submitted blank or whitespace-only answer is invalid and terminates with status 2.
+- Whole-file, line-prefix, and byte-prefix match prompts display `[y/n]` and have no default. A submitted blank or whitespace-only answer is invalid and repeats the prompt.
 - The continuation prompt `[Y/n]` accepts the same answers but defaults to `yes` on a submitted blank or whitespace-only answer. Tell users to choose the same continuation answer on both copies.
 - The other-line-count and other-byte-count prompts have no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
-- Invalid answers or counts produce a diagnostic and terminate with status 2. The user must restart both instances to begin a new comparison session.
+- Invalid answers or malformed counts produce a diagnostic on stderr and repeat the same prompt until a valid answer is submitted. This applies to all match, continuation, and count prompts, including blank counts, signed or nondecimal counts, and `u64` overflow. Invalid input must not advance either search, recompute fingerprints, or restart the session.
 - Stdin EOF is an aborted interaction and terminates with status 2. It must never be interpreted as a blank answer or a sequence of `no` answers.
 - A partial answer followed by EOF without a newline also aborts; only a newline submits a prompt answer.
 
@@ -358,7 +358,7 @@ Inspect/correct the corresponding files, then run paircomp again.
 - CLI diagnostics go to stderr; normal interactive/output information goes to stdout.
 - Exit with status 0 when the user confirms a whole-file match, or for successful `--help`/`--version` output.
 - Exit with status 1 after the user declines within-line continuation or successfully completes the byte search.
-- Exit with status 2 for invocation errors, I/O errors, or aborted/invalid interaction, including a reported mismatch between two empty files or two zero-length lines. EOF at the continuation prompt is an abort, not a choice to finish. A detected difference is a completed comparison, distinct from these errors.
+- Exit with status 2 for invocation errors, I/O errors, aborted input, or an inconsistent comparison such as a reported mismatch between two empty files or two zero-length lines. Malformed answers and counts are recoverable as specified in section 7.1. EOF, including after a retry or at the continuation prompt, aborts and requires restarting both instances. A detected difference is a completed comparison, distinct from these errors.
 - Do not panic for expected user/file errors.
 - Keep the error model simple; avoid adding a large error-handling dependency unless it provides clear value.
 
@@ -397,7 +397,7 @@ Use multiple fixtures for the added/absent-line case when useful—for example, 
 
 Include paired-state tests that simulate both isolated instances using two fixtures. Construct one search with counts `(a, b)` and the other with `(b, a)`. At each step, assert that both request the same line, compute each fixture's actual prefix fingerprint, and feed the same equality result into both states. Assert that both terminate at the expected first divergent line. Cover equal and unequal line counts, an appended line, empty versus nonempty input, and differing final-newline state. For identical files, verify that the whole-file comparison completes without creating a line search.
 
-CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that submitted blank or whitespace-only match answers at every comparison stage, stdin EOF, and invalid input abort with status 2; a blank line-count answer is invalid. Do not duplicate core algorithm tests through the CLI.
+CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify recovery from repeated invalid answers at every prompt, including blank or whitespace-only match answers and malformed counts. Retries must preserve fingerprints, requested positions, and final results; corrected input completes with status 0 or 1. Verify that stdin EOF and partial answers without a newline still abort with status 2, including after invalid input. Do not duplicate core algorithm tests through the CLI.
 
 Within-line tests must also cover:
 

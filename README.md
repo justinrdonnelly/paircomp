@@ -53,9 +53,12 @@ Answers accept `y`/`yes` and `n`/`no`, regardless of case or surrounding
 whitespace. Fingerprint `[y/n]` prompts require an explicit answer; blank or
 whitespace-only answers are invalid. An empty answer at the continuation
 `[Y/n]` prompt means `yes`. Line and byte counts must be nonnegative decimal
-integers representable as `u64`; neither has a default. Invalid input or input
-ending before the comparison finishes aborts the session. Every answer must be
-submitted with a newline, including a choice to stop at the line.
+integers representable as `u64`; neither has a default. Invalid answers or
+counts produce a diagnostic and repeat the same prompt without advancing the
+comparison. Enter a corrected answer to continue; no restart is needed.
+Input ending before the comparison finishes (EOF) still aborts the session.
+Every answer must be submitted with a newline, including a choice to stop at
+the line; a partial answer followed by EOF also aborts.
 
 For example, suppose the first system has the bytes `a\nb\n` and the second has
 `a\nb\nc\n` (`\n` denotes an LF byte):

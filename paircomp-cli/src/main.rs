@@ -24,9 +24,6 @@ enum WorkflowError {
     Core(paircomp_core::Error),
     Io(io::Error),
     Aborted,
-    InvalidAnswer,
-    InvalidLineCount,
-    InvalidByteCount,
 }
 
 impl fmt::Display for WorkflowError {
@@ -35,13 +32,6 @@ impl fmt::Display for WorkflowError {
             Self::Core(error) => error.fmt(f),
             Self::Io(error) => write!(f, "terminal I/O failed: {error}"),
             Self::Aborted => f.write_str("input ended before the comparison was complete"),
-            Self::InvalidAnswer => f.write_str("invalid answer; enter y, yes, n, or no"),
-            Self::InvalidLineCount => {
-                f.write_str("invalid line count; enter a nonnegative decimal u64")
-            }
-            Self::InvalidByteCount => {
-                f.write_str("invalid byte count; enter a nonnegative decimal u64")
-            }
         }
     }
 }
@@ -60,10 +50,16 @@ impl From<io::Error> for WorkflowError {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(&cli.file, &mut io::stdin().lock(), &mut io::stdout().lock()) {
+    let mut diagnostics = io::stderr().lock();
+    match run(
+        &cli.file,
+        &mut io::stdin().lock(),
+        &mut io::stdout().lock(),
+        &mut diagnostics,
+    ) {
         Ok(status) => status,
         Err(error) => {
-            let _ = writeln!(io::stderr().lock(), "paircomp: {error}");
+            let _ = writeln!(diagnostics, "paircomp: {error}");
             ExitCode::from(2)
         }
     }
@@ -76,6 +72,7 @@ fn run(
     path: &Path,
     input: &mut impl BufRead,
     output: &mut impl Write,
+    diagnostics: &mut impl Write,
 ) -> Result<ExitCode, WorkflowError> {
     let info = inspect_file(path)?;
     writeln!(output, "File: {}", path.display())?;
@@ -96,6 +93,7 @@ fn run(
     if read_match(
         input,
         output,
+        diagnostics,
         "Does this fingerprint match the other copy? [y/n] ",
     )? {
         writeln!(output, "Files match.")?;
@@ -105,8 +103,9 @@ fn run(
     let other_line_count = read_count(
         input,
         output,
+        diagnostics,
         "Line count displayed by the other copy: ",
-        WorkflowError::InvalidLineCount,
+        "line",
     )?;
     let mut search = LineSearch::new(info.line_count, other_line_count)?;
     loop {
@@ -116,7 +115,12 @@ fn run(
                 writeln!(output)?;
                 writeln!(output, "Compare through line {line}:")?;
                 writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
-                let matched = read_match(input, output, "Does this fingerprint match? [y/n] ")?;
+                let matched = read_match(
+                    input,
+                    output,
+                    diagnostics,
+                    "Does this fingerprint match? [y/n] ",
+                )?;
                 search.record_result(matched)?;
             }
             LineSearchStep::DifferenceAtLine { line } => {
@@ -132,10 +136,11 @@ fn run(
                 if read_yes_no(
                     input,
                     output,
+                    diagnostics,
                     "Continue within this line? [Y/n] ",
                     Some(true),
                 )? {
-                    localize_byte(path, line, input, output)?;
+                    localize_byte(path, line, input, output, diagnostics)?;
                 }
                 writeln!(output)?;
                 writeln!(
@@ -156,6 +161,7 @@ fn localize_byte(
     line: u64,
     input: &mut impl BufRead,
     output: &mut impl Write,
+    diagnostics: &mut impl Write,
 ) -> Result<(), WorkflowError> {
     let local = inspect_line(path, line)?;
     let local_byte_len = local.map_or(0, |info| info.byte_len);
@@ -167,8 +173,9 @@ fn localize_byte(
     let other_byte_len = read_count(
         input,
         output,
+        diagnostics,
         "Byte count displayed for this line by the other copy: ",
-        WorkflowError::InvalidByteCount,
+        "byte",
     )?;
     let mut search = ByteSearch::new(local_byte_len, other_byte_len)?;
     loop {
@@ -178,7 +185,12 @@ fn localize_byte(
                 writeln!(output)?;
                 writeln!(output, "Compare line {line} through byte {byte}:")?;
                 writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
-                let matched = read_match(input, output, "Does this fingerprint match? [y/n] ")?;
+                let matched = read_match(
+                    input,
+                    output,
+                    diagnostics,
+                    "Does this fingerprint match? [y/n] ",
+                )?;
                 search.record_result(matched)?;
             }
             ByteSearchStep::DifferenceAtByte { byte } => {
@@ -239,48 +251,65 @@ fn read_prompt(
 fn read_match(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    diagnostics: &mut impl Write,
     prompt: &str,
 ) -> Result<bool, WorkflowError> {
-    read_yes_no(input, output, prompt, None)
+    read_yes_no(input, output, diagnostics, prompt, None)
 }
 
 /// Reads a trimmed, case-insensitive yes/no answer with an optional default.
 ///
 /// A submitted blank answer is invalid without a default. The caller's prompt
 /// must show `[y/n]` without a default, or capitalize the default choice.
+/// Invalid answers repeat the prompt; EOF and I/O failures abort.
 fn read_yes_no(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    diagnostics: &mut impl Write,
     prompt: &str,
     default: Option<bool>,
 ) -> Result<bool, WorkflowError> {
-    let answer = read_prompt(input, output, prompt)?;
-    let answer = answer.trim();
-    if answer.is_empty() {
-        default.ok_or(WorkflowError::InvalidAnswer)
-    } else if answer.eq_ignore_ascii_case("n") || answer.eq_ignore_ascii_case("no") {
-        Ok(false)
-    } else if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
-        Ok(true)
-    } else {
-        Err(WorkflowError::InvalidAnswer)
+    loop {
+        let answer = read_prompt(input, output, prompt)?;
+        let answer = answer.trim();
+        if answer.is_empty() {
+            if let Some(default) = default {
+                return Ok(default);
+            }
+        } else if answer.eq_ignore_ascii_case("n") || answer.eq_ignore_ascii_case("no") {
+            return Ok(false);
+        } else if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
+            return Ok(true);
+        }
+        writeln!(
+            diagnostics,
+            "paircomp: invalid answer; enter y, yes, n, or no"
+        )?;
     }
 }
 
 /// Reads a decimal `u64`, rejecting blank input, signs, and overflow.
 ///
-/// Surrounding whitespace is ignored. Malformed input returns `invalid`, allowing
-/// the caller to distinguish line-count and byte-count diagnostics.
+/// Surrounding whitespace is ignored. Malformed input repeats the prompt with a
+/// diagnostic naming the count kind; EOF and I/O failures abort.
 fn read_count(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    diagnostics: &mut impl Write,
     prompt: &str,
-    invalid: WorkflowError,
+    kind: &str,
 ) -> Result<u64, WorkflowError> {
-    let answer = read_prompt(input, output, prompt)?;
-    let answer = answer.trim();
-    if answer.is_empty() || !answer.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid);
+    loop {
+        let answer = read_prompt(input, output, prompt)?;
+        let answer = answer.trim();
+        if !answer.is_empty() && answer.bytes().all(|byte| byte.is_ascii_digit()) {
+            if let Ok(count) = answer.parse() {
+                return Ok(count);
+            }
+        }
+        writeln!(
+            diagnostics,
+            "paircomp: invalid {kind} count; enter a nonnegative decimal u64"
+        )?;
     }
-    answer.parse().map_err(|_| invalid)
 }

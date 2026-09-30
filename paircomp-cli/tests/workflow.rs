@@ -167,7 +167,7 @@ fn zero_other_line_count_is_valid_for_a_nonempty_local_file() {
 }
 
 #[test]
-fn invalid_or_aborted_input_exits_with_status_two() {
+fn eof_aborts_even_after_invalid_input() {
     let fixture = Fixture::new(b"a\n");
     for (answers, diagnostic) in [
         ("", "input ended"),
@@ -182,6 +182,7 @@ fn invalid_or_aborted_input_exits_with_status_two() {
         let output = invoke(fixture.path(), answers);
         assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
         assert!(stderr(&output).contains(diagnostic), "answers: {answers:?}");
+        assert!(stderr(&output).ends_with("input ended before the comparison was complete\n"));
     }
 }
 
@@ -210,17 +211,121 @@ fn fingerprint_prompts_reject_blank_answers_at_every_stage() {
             let output = invoke(fixture.path(), &answers);
             assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
             assert!(stderr(&output).contains("invalid answer; enter y, yes, n, or no"));
+            assert!(stderr(&output).ends_with("input ended before the comparison was complete\n"));
             let text = stdout(&output);
-            assert!(text.ends_with(prompt), "answers: {answers:?}");
+            assert!(text.ends_with(&prompt.repeat(2)), "answers: {answers:?}");
             assert!(!text.contains(forbidden_result), "answers: {answers:?}");
         }
     }
 }
 
 #[test]
+fn invalid_input_repeats_each_prompt_and_accepts_a_corrected_answer() {
+    let fixture = Fixture::new(b"ab\ncd\n");
+    let invalid_answers: &[&str] = &["", " \t", "maybe"];
+    let invalid_counts: &[&str] = &["", " \t", "no", "-1", "+2", "1.5", "18446744073709551616"];
+    for (prefix, suffix, prompt, invalid, diagnostic, status) in [
+        (
+            "",
+            " YES \n",
+            "Does this fingerprint match the other copy? [y/n] ",
+            invalid_answers,
+            "invalid answer; enter y, yes, n, or no",
+            0,
+        ),
+        (
+            "n\n",
+            " 2 \ny\n\n3\nn\ny\n",
+            "Line count displayed by the other copy: ",
+            invalid_counts,
+            "invalid line count; enter a nonnegative decimal u64",
+            1,
+        ),
+        (
+            "n\n2\n",
+            " YES \n\n3\nn\ny\n",
+            "Does this fingerprint match? [y/n] ",
+            invalid_answers,
+            "invalid answer; enter y, yes, n, or no",
+            1,
+        ),
+        (
+            "n\n2\ny\n",
+            " \t\n3\nn\ny\n",
+            "Continue within this line? [Y/n] ",
+            &["maybe", "1"],
+            "invalid answer; enter y, yes, n, or no",
+            1,
+        ),
+        (
+            "n\n2\ny\n",
+            " NO \n",
+            "Continue within this line? [Y/n] ",
+            &["maybe", "1"],
+            "invalid answer; enter y, yes, n, or no",
+            1,
+        ),
+        (
+            "n\n2\ny\n\n",
+            " 3 \nn\ny\n",
+            "Byte count displayed for this line by the other copy: ",
+            invalid_counts,
+            "invalid byte count; enter a nonnegative decimal u64",
+            1,
+        ),
+        (
+            "n\n2\ny\n\n3\n",
+            " NO \ny\n",
+            "Does this fingerprint match? [y/n] ",
+            invalid_answers,
+            "invalid answer; enter y, yes, n, or no",
+            1,
+        ),
+    ] {
+        let clean = invoke(fixture.path(), &format!("{prefix}{suffix}"));
+        assert_eq!(clean.status.code(), Some(status));
+        assert!(clean.stderr.is_empty());
+        let answers = format!("{prefix}{}\n{suffix}", invalid.join("\n"));
+        let recovered = invoke(fixture.path(), &answers);
+        assert_eq!(
+            recovered.status.code(),
+            Some(status),
+            "answers: {answers:?}"
+        );
+        assert_eq!(
+            stderr(&recovered),
+            format!("paircomp: {diagnostic}\n").repeat(invalid.len()),
+            "answers: {answers:?}"
+        );
+        let clean_text = stdout(&clean);
+        let recovered_text = stdout(&recovered);
+        assert_eq!(
+            recovered_text.matches(prompt).count(),
+            clean_text.matches(prompt).count() + invalid.len(),
+            "answers: {answers:?}"
+        );
+        // Only the repeated prompt may differ: fingerprints, requested positions,
+        // and final results must be unchanged by invalid answers.
+        assert_eq!(
+            recovered_text.replace(prompt, ""),
+            clean_text.replace(prompt, ""),
+            "answers: {answers:?}"
+        );
+    }
+}
+
+#[test]
 fn unterminated_answers_abort_at_every_prompt() {
     let fixture = Fixture::new(b"a\n");
-    for answers in ["yes", "  ", "no\n2", "no\n2\ny"] {
+    for answers in [
+        "yes",
+        "  ",
+        "no\n2",
+        "no\n2\ny",
+        "maybe\nyes",
+        "no\n-1\n2",
+        "no\n2\nmaybe\ny",
+    ] {
         let output = invoke(fixture.path(), answers);
         assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
         assert!(
@@ -263,14 +368,28 @@ fn non_utf8_file_path_is_accepted() {
 }
 
 #[test]
-fn paired_cli_instances_default_to_continuing_and_find_utf8_character() {
+fn paired_cli_instances_stay_aligned_after_retries_and_default_continuation() {
     let first = Fixture::new("same\ncafé".as_bytes());
     let second = Fixture::new("same\ncafè".as_bytes());
-    let first_output = invoke(first.path(), "n\n2\ny\n \n 5 \ny\ny\n");
+    let first_output = invoke(
+        first.path(),
+        "\nn\nbad\n2\n\nYES\nmaybe\n \n-1\n 5 \nmaybe\ny\ny\n",
+    );
     let second_output = invoke(second.path(), "n\n2\ny\n \n 5 \ny\ny\n");
+    assert_eq!(
+        stderr(&first_output),
+        concat!(
+            "paircomp: invalid answer; enter y, yes, n, or no\n",
+            "paircomp: invalid line count; enter a nonnegative decimal u64\n",
+            "paircomp: invalid answer; enter y, yes, n, or no\n",
+            "paircomp: invalid answer; enter y, yes, n, or no\n",
+            "paircomp: invalid byte count; enter a nonnegative decimal u64\n",
+            "paircomp: invalid answer; enter y, yes, n, or no\n",
+        )
+    );
+    assert!(second_output.stderr.is_empty());
     for output in [&first_output, &second_output] {
         assert_eq!(output.status.code(), Some(1));
-        assert!(output.stderr.is_empty());
         let text = stdout(output);
         assert!(text.contains("Line 2 size: 5 bytes (including any CR/LF)"));
         assert!(text.contains("Byte count displayed for this line by the other copy:"));
@@ -338,26 +457,30 @@ fn invalid_utf8_reports_only_the_byte_position() {
 }
 
 #[test]
-fn invalid_or_aborted_within_line_input_is_an_error() {
+fn within_line_eof_aborts_even_after_invalid_input() {
     let fixture = Fixture::new(b"ab");
     for (answers, diagnostic) in [
         ("n\n1\n", "input ended"),
         ("n\n1\ny", "input ended"),
         ("n\n1\nmaybe\n", "invalid answer"),
+        ("n\n1\nmaybe\nn", "invalid answer"),
         ("n\n1\n\n", "input ended"),
         ("n\n1\ny\n2", "input ended"),
         ("n\n1\ny\n\n", "invalid byte count"),
         ("n\n1\ny\n-1\n", "invalid byte count"),
+        ("n\n1\ny\n-1\n2", "invalid byte count"),
         ("n\n1\ny\n+2\n", "invalid byte count"),
         ("n\n1\ny\n1.5\n", "invalid byte count"),
         ("n\n1\ny\n18446744073709551616\n", "invalid byte count"),
         ("n\n1\ny\n2\n", "input ended"),
         ("n\n1\ny\n2\ny", "input ended"),
         ("n\n1\ny\n2\nmaybe\n", "invalid answer"),
+        ("n\n1\ny\n2\nmaybe\ny", "invalid answer"),
     ] {
         let output = invoke(fixture.path(), answers);
         assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
         assert!(stderr(&output).contains(diagnostic), "answers: {answers:?}");
+        assert!(stderr(&output).ends_with("input ended before the comparison was complete\n"));
         assert!(!stdout(&output).contains("First divergence: line 1, byte"));
     }
     let empty = Fixture::new(b"");
