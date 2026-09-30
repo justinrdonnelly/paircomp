@@ -302,7 +302,7 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 ### 7.1 Prompt input
 
 - Match prompts accept `y`/`yes` and `n`/`no`, case-insensitively, after trimming surrounding whitespace.
-- The displayed `[y/N]` default means that a submitted blank or whitespace-only answer is `no`.
+- Whole-file, line-prefix, and byte-prefix match prompts display `[y/n]` and have no default. A submitted blank or whitespace-only answer is invalid and terminates with status 2.
 - The continuation prompt `[Y/n]` accepts the same answers but defaults to `yes` on a submitted blank or whitespace-only answer. Tell users to choose the same continuation answer on both copies.
 - The other-line-count and other-byte-count prompts have no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
 - Invalid answers or counts produce a diagnostic and terminate with status 2. The user must restart both instances to begin a new comparison session.
@@ -321,16 +321,16 @@ Fingerprint: <fingerprint>
 
 Keep both files unchanged during this session. Restart after editing either file.
 
-Does this fingerprint match the other copy? [y/N] n
+Does this fingerprint match the other copy? [y/n] n
 Line count displayed by the other copy: 1247
 
 Compare through line 624:
 Fingerprint: <fingerprint>
-Does this fingerprint match? [y/N] y
+Does this fingerprint match? [y/n] y
 
 Compare through line 936:
 Fingerprint: <fingerprint>
-Does this fingerprint match? [y/N] n
+Does this fingerprint match? [y/n] n
 
 ...
 
@@ -343,7 +343,7 @@ Byte count displayed for this line by the other copy: 124
 
 Compare line 737 through byte 62:
 Fingerprint: <fingerprint>
-Does this fingerprint match? [y/N] n
+Does this fingerprint match? [y/n] n
 
 ...
 
@@ -397,7 +397,7 @@ Use multiple fixtures for the added/absent-line case when useful—for example, 
 
 Include paired-state tests that simulate both isolated instances using two fixtures. Construct one search with counts `(a, b)` and the other with `(b, a)`. At each step, assert that both request the same line, compute each fixture's actual prefix fingerprint, and feed the same equality result into both states. Assert that both terminate at the expected first divergent line. Cover equal and unequal line counts, an appended line, empty versus nonempty input, and differing final-newline state. For identical files, verify that the whole-file comparison completes without creating a line search.
 
-CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that a submitted blank match answer uses the `no` default, while stdin EOF and invalid input abort with status 2; a blank line-count answer is invalid. Do not duplicate core algorithm tests through the CLI.
+CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that submitted blank or whitespace-only match answers at every comparison stage, stdin EOF, and invalid input abort with status 2; a blank line-count answer is invalid. Do not duplicate core algorithm tests through the CLI.
 
 Within-line tests must also cover:
 
@@ -405,7 +405,7 @@ Within-line tests must also cover:
 - Paired line and byte searches with swapped counts and actual fingerprints: first/last-byte changes, inserted/absent bytes, unequal lengths, added lines, empty files, missing final newlines, CRLF versus LF, and invalid UTF-8.
 - UTF-8 code-point mapping inside multibyte characters, emoji, combining marks, CR/LF, and immediately after a valid line. Validate the whole local line and omit annotations for absent or invalid UTF-8 lines. Reject zero or out-of-range byte coordinates.
 - Long lines and UTF-8 sequences across read-buffer boundaries; short and interrupted reads; propagated I/O errors; search-state stability, zero-length mismatch rejection, completion errors, and maximum `u64` bounds.
-- Focused CLI tests for default continuation, declining, byte-count exchange, unchanged match-prompt defaults, character annotations, local absence explanations, and invalid/aborted input at every new prompt. Include paired CLI sessions and verify that whole-file matches bypass both searches.
+- Focused CLI tests for default continuation, declining, byte-count exchange, explicit match answers without defaults, character annotations, local absence explanations, and invalid/aborted input at every new prompt. Include paired CLI sessions and verify that whole-file matches bypass both searches.
 
 ## 12. Design constraints and current scope
 

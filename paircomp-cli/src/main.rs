@@ -96,7 +96,7 @@ fn run(
     if read_match(
         input,
         output,
-        "Does this fingerprint match the other copy? [y/N] ",
+        "Does this fingerprint match the other copy? [y/n] ",
     )? {
         writeln!(output, "Files match.")?;
         return Ok(ExitCode::SUCCESS);
@@ -116,7 +116,7 @@ fn run(
                 writeln!(output)?;
                 writeln!(output, "Compare through line {line}:")?;
                 writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
-                let matched = read_match(input, output, "Does this fingerprint match? [y/N] ")?;
+                let matched = read_match(input, output, "Does this fingerprint match? [y/n] ")?;
                 search.record_result(matched)?;
             }
             LineSearchStep::DifferenceAtLine { line } => {
@@ -129,7 +129,12 @@ fn run(
                     output,
                     "Choose the same continuation answer on both copies."
                 )?;
-                if read_yes_no(input, output, "Continue within this line? [Y/n] ", true)? {
+                if read_yes_no(
+                    input,
+                    output,
+                    "Continue within this line? [Y/n] ",
+                    Some(true),
+                )? {
                     localize_byte(path, line, input, output)?;
                 }
                 writeln!(output)?;
@@ -173,7 +178,7 @@ fn localize_byte(
                 writeln!(output)?;
                 writeln!(output, "Compare line {line} through byte {byte}:")?;
                 writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
-                let matched = read_match(input, output, "Does this fingerprint match? [y/N] ")?;
+                let matched = read_match(input, output, "Does this fingerprint match? [y/n] ")?;
                 search.record_result(matched)?;
             }
             ByteSearchStep::DifferenceAtByte { byte } => {
@@ -236,23 +241,23 @@ fn read_match(
     output: &mut impl Write,
     prompt: &str,
 ) -> Result<bool, WorkflowError> {
-    read_yes_no(input, output, prompt, false)
+    read_yes_no(input, output, prompt, None)
 }
 
-/// Reads a trimmed, case-insensitive yes/no answer with a caller-selected default.
+/// Reads a trimmed, case-insensitive yes/no answer with an optional default.
 ///
-/// The default applies only to a submitted blank answer; the caller's prompt
-/// must display the corresponding `[y/N]` or `[Y/n]` choice.
+/// A submitted blank answer is invalid without a default. The caller's prompt
+/// must show `[y/n]` without a default, or capitalize the default choice.
 fn read_yes_no(
     input: &mut impl BufRead,
     output: &mut impl Write,
     prompt: &str,
-    default: bool,
+    default: Option<bool>,
 ) -> Result<bool, WorkflowError> {
     let answer = read_prompt(input, output, prompt)?;
     let answer = answer.trim();
     if answer.is_empty() {
-        Ok(default)
+        default.ok_or(WorkflowError::InvalidAnswer)
     } else if answer.eq_ignore_ascii_case("n") || answer.eq_ignore_ascii_case("no") {
         Ok(false)
     } else if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {

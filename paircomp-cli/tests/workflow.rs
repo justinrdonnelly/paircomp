@@ -111,7 +111,7 @@ fn confirmed_whole_file_match_exits_successfully() {
 #[test]
 fn equal_counts_follow_core_search_and_report_a_difference() {
     let fixture = Fixture::new(b"a\nb\nlocal\nd\n");
-    let output = invoke(fixture.path(), "n\n 4 \ny\n \nn\n");
+    let output = invoke(fixture.path(), "n\n 4 \ny\n NO \nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(text.contains("Line count displayed by the other copy: "));
@@ -134,9 +134,9 @@ fn equal_counts_follow_core_search_and_report_a_difference() {
 }
 
 #[test]
-fn blank_answer_uses_no_default_and_beyond_eof_is_reported() {
+fn beyond_eof_is_reported() {
     let fixture = Fixture::new(b"a\n");
-    let output = invoke(fixture.path(), "  \n2\ny\nn\n");
+    let output = invoke(fixture.path(), "n\n2\ny\nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
     assert!(text.contains("Compare through line 1:"));
@@ -182,6 +182,38 @@ fn invalid_or_aborted_input_exits_with_status_two() {
         let output = invoke(fixture.path(), answers);
         assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
         assert!(stderr(&output).contains(diagnostic), "answers: {answers:?}");
+    }
+}
+
+#[test]
+fn fingerprint_prompts_reject_blank_answers_at_every_stage() {
+    let fixture = Fixture::new(b"ab\ncd\n");
+    for (prefix, prompt, forbidden_result) in [
+        (
+            "",
+            "Does this fingerprint match the other copy? [y/n] ",
+            "Line count displayed by the other copy:",
+        ),
+        (
+            "n\n2\n",
+            "Does this fingerprint match? [y/n] ",
+            "First divergence:",
+        ),
+        (
+            "n\n2\nn\ny\n3\n",
+            "Does this fingerprint match? [y/n] ",
+            "First divergence: line 1, byte",
+        ),
+    ] {
+        for blank in ["\n", " \t\n"] {
+            let answers = format!("{prefix}{blank}");
+            let output = invoke(fixture.path(), &answers);
+            assert_eq!(output.status.code(), Some(2), "answers: {answers:?}");
+            assert!(stderr(&output).contains("invalid answer; enter y, yes, n, or no"));
+            let text = stdout(&output);
+            assert!(text.ends_with(prompt), "answers: {answers:?}");
+            assert!(!text.contains(forbidden_result), "answers: {answers:?}");
+        }
     }
 }
 
@@ -279,8 +311,8 @@ fn paired_cli_handles_a_missing_final_newline_and_an_absent_line() {
 
     let short = Fixture::new(b"a\n");
     let long = Fixture::new(b"a\nb\n");
-    let short_output = invoke(short.path(), "n\n2\ny\ny\n2\n\n");
-    let long_output = invoke(long.path(), "n\n1\ny\ny\n0\n\n");
+    let short_output = invoke(short.path(), "n\n2\ny\ny\n2\nn\n");
+    let long_output = invoke(long.path(), "n\n1\ny\ny\n0\nn\n");
     for output in [&short_output, &long_output] {
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stderr.is_empty());
