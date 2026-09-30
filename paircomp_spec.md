@@ -1,19 +1,23 @@
-# Paircomp MVP Implementation Specification
+# Paircomp Specification
 
-*Implementation brief for an AI coding agent*
+*Behavior and design reference for contributors and coding agents*
 
-**Status:** MVP / v0.1 design
+**Status:** Maintained specification
 **License:** MPL-2.0 for Paircomp code, subject to compatible dependency licenses
+
+This document is the source of truth for Paircomp's behavior, architecture, comparison protocol, edge cases, and acceptance criteria. Update it alongside intentional changes to the implementation and its tests.
+
+Sections 1–12 describe the current behavior and design requirements. Section 12 distinguishes ongoing design constraints from the current v0.1 scope limits. Sections 13–14 retain the completed MVP implementation checklist and completion criteria as historical context; they are not a plan for future work.
 
 ## 1. Objective
 
-Implement Paircomp, a small Rust utility that helps a human determine whether two isolated copies of a text file are identical and, when they are not, efficiently locate the first point of divergence.
+Paircomp is a small Rust utility that helps a human determine whether two isolated copies of a file are identical and, when they are not, efficiently locate the first point of divergence.
 
-The two copies are never available to the same Paircomp process. The user runs Paircomp independently on each system and manually compares short fingerprints displayed by the two instances.
+The two copies are never available to the same Paircomp process. The user runs Paircomp independently on each system and manually compares fingerprints displayed by the two instances.
 
-The MVP must prioritize a small, understandable codebase and a clean architectural boundary between the comparison/hash library and the command-line user interface. The library must not depend on terminal interaction so that a future GUI or other frontend can use it without redesigning the core.
+Paircomp must prioritize a small, understandable codebase and a clean architectural boundary between the comparison/hash library and the command-line user interface. The library must not depend on terminal interaction so that a future GUI or other frontend can use it without redesigning the core.
 
-## 2. MVP user experience
+## 2. User experience
 
 The normal invocation is:
 
@@ -31,11 +35,11 @@ The same command is run against the corresponding file on both isolated systems.
 6. Ask whether to continue within that line, defaulting to yes. Both instances must choose the same answer. If they decline, finish with the line result.
 7. When continuing, display the selected line's byte count, obtain the other instance's byte count, and bisect raw-byte prefixes of that line to locate the first differing byte. Report its 1-based byte position and, when the local line is valid UTF-8, its 1-based Unicode code-point position. Explain when the local byte is absent.
 
-Optional within-line localization is included in v0.1. Hashing and localization remain byte based; character positions are supplementary annotations, with the exact semantics in sections 4.2 and 6.3.
+Within-line localization is optional. Hashing and localization remain byte based; character positions are supplementary annotations, with the exact semantics in sections 4.2 and 6.3.
 
 ## 3. Architecture: strict UI/library separation
 
-Use a Cargo workspace or equivalent multi-crate layout. Prefer two crates from the beginning rather than putting the core logic in the binary crate.
+Paircomp uses a Cargo workspace with separate library and CLI crates. Keep core logic in the library crate.
 
 The minimum supported Rust version for both crates is 1.98.1.
 
@@ -122,7 +126,7 @@ line 4
 
 `fingerprint_through_line(path, 2)` hashes the raw bytes corresponding to the first two lines.
 
-The core may later expose an in-memory/indexed representation so repeated prefix checks do not repeatedly scan the file from byte zero. Do not prematurely optimize this for v0.1. Correctness and a clear API are more important.
+The core currently scans from the beginning of the file for each prefix check. An in-memory/indexed representation could avoid repeated scans, but add such an optimization only when profiling justifies it. Correctness and a clear API take priority.
 
 ### 4.1 Search state
 
@@ -193,7 +197,7 @@ Both searches require an established mismatch and unchanged files. Repeated `cur
 
 ## 5. Fingerprinting
 
-Use BLAKE3 for the MVP. Use the maintained Rust `blake3` crate rather than implementing a hash function.
+Use BLAKE3 through the maintained Rust `blake3` crate rather than implementing a hash function.
 
 Feed raw file bytes into the hash. Do not normalize:
 
@@ -205,9 +209,9 @@ Feed raw file bytes into the hash. Do not normalize:
 
 Paircomp is establishing exact file equality.
 
-Internally retain the full digest. The CLI may display a shortened, human-friendly fingerprint for intermediate comparisons. The truncation length must provide a deliberately chosen and documented collision probability.
+Internally retain the full 256-bit digest. The CLI displays all 64 lowercase hexadecimal digits for whole-file and prefix comparisons; it does not truncate fingerprints.
 
-Do not silently treat a very short display token as cryptographic proof of equality. For the initial whole-file comparison, displaying the full digest is acceptable and may be preferable for v0.1.
+Matching fingerprints provide strong evidence of equality, not an absolute proof. Any future change to truncate displayed fingerprints must specify the truncation length and document the resulting collision probability.
 
 ## 6. Line semantics and search algorithm
 
@@ -254,7 +258,7 @@ For `b"a\n"` versus `b"a\nb\n"`, the first divergence is line 2; the shorter ins
 
 ### 6.2 File stability during a session
 
-Both files must remain unchanged from initial inspection until the comparison session ends. Tell the user to keep them unchanged and restart Paircomp after any edit or replacement. The MVP may reread the file for each prefix and does not need to implement snapshots, locking, or reliable mutation detection. Results are only valid under this stability requirement; document it in the README as well.
+Both files must remain unchanged from initial inspection until the comparison session ends. Tell the user to keep them unchanged and restart Paircomp after any edit or replacement. The current implementation rereads the file for each prefix and does not snapshot files, lock them, or detect changes. Results are only valid under this stability requirement; document it in the README as well.
 
 ### 6.3 Within-line protocol and positions
 
@@ -273,7 +277,7 @@ Character positions count Unicode code points, including CR and LF separately, r
 
 ## 7. CLI responsibilities
 
-Use `clap` with its derive API. The MVP surface should remain intentionally small:
+Use `clap` with its derive API. The current CLI surface is:
 
 ```console
 paircomp FILE
@@ -356,7 +360,7 @@ Inspect/correct the corresponding files, then run paircomp again.
 - Exit with status 1 after the user declines within-line continuation or successfully completes the byte search.
 - Exit with status 2 for invocation errors, I/O errors, or aborted/invalid interaction, including a reported mismatch between two empty files or two zero-length lines. EOF at the continuation prompt is an abort, not a choice to finish. A detected difference is a completed comparison, distinct from these errors.
 - Do not panic for expected user/file errors.
-- Keep the error model simple for v0.1; avoid adding a large error-handling dependency unless it provides clear value.
+- Keep the error model simple; avoid adding a large error-handling dependency unless it provides clear value.
 
 ## 10. Dependencies and licensing
 
@@ -403,9 +407,21 @@ Within-line tests must also cover:
 - Long lines and UTF-8 sequences across read-buffer boundaries; short and interrupted reads; propagated I/O errors; search-state stability, zero-length mismatch rejection, completion errors, and maximum `u64` bounds.
 - Focused CLI tests for default continuation, declining, byte-count exchange, unchanged match-prompt defaults, character annotations, local absence explanations, and invalid/aborted input at every new prompt. Include paired CLI sessions and verify that whole-file matches bypass both searches.
 
-## 12. Explicit non-goals for v0.1
+## 12. Design constraints and current scope
 
-- No networking or direct communication between Paircomp instances.
+### 12.1 Ongoing design constraints
+
+- Each instance reads only its local copy. Comparisons rely on manually exchanged counts and fingerprints, without networking or direct communication between instances.
+- Compare raw bytes without normalization. UTF-8 positions are supplementary annotations and must not restrict support for arbitrary file contents.
+- Keep file operations, hashing, search state, and position mapping in a frontend-neutral core. A future frontend must be able to reuse it without terminal interaction.
+- Keep the implementation small and straightforward. Avoid elaborate plugin/framework architecture and optimize repeated scans only when profiling justifies it.
+
+These constraints guide future work as well as the current implementation. Changes to them require an intentional design revision reflected in this specification.
+
+### 12.2 Current scope limits (v0.1)
+
+The following features are outside the current scope. These exclusions are neither permanent prohibitions nor a roadmap; future additions should update the relevant behavior and acceptance criteria in this specification.
+
 - No automatic file transfer.
 - No patch/delta generation or application.
 - No rsync-style synchronization.
@@ -413,14 +429,12 @@ Within-line tests must also cover:
 - No grapheme-cluster or visual-column localization, non-UTF-8 character decoding, or line-content excerpts.
 - No directory-tree comparison.
 - No configuration file.
-- No selectable hash algorithms unless a concrete need appears.
+- No selectable hash algorithms.
 - No GUI, but the architecture must permit one later.
-- No elaborate plugin/framework architecture.
-- No premature optimization of repeated file scans unless profiling shows it matters.
 
-## 13. Implementation plan and checklist
+## 13. Historical MVP implementation checklist
 
-Work through these milestones in order, marking items complete after the corresponding work and verification are finished. Each milestone may involve several small, focused commits. Choose commit boundaries around coherent changes, include their related tests and documentation, and keep intermediate commits buildable. Follow the commit-message, identity, attribution, and verification instructions in [AGENTS.md](AGENTS.md).
+The milestones below record the completed MVP implementation and its original completion criteria. Retain them as historical context rather than reopening them for later releases. Current work follows the maintained requirements in sections 1–12 and the working practices in [AGENTS.md](AGENTS.md).
 
 ### 13.1 Foundation
 
@@ -471,7 +485,9 @@ Completion criteria: required checks pass, documented usage matches the implemen
 
 Completion criteria: both instances deterministically locate the first differing byte when continuing, character annotations match the specified UTF-8 semantics, and users can still finish at the line. All required checks pass.
 
-## 14. Definition of done for the MVP
+## 14. Historical MVP completion criteria
+
+The following criteria defined completion of the original MVP. They are retained as a record of that milestone; sections 1–12 define the maintained requirements for subsequent work.
 
 On two systems containing corresponding files, a user can run `paircomp FILE` on each.
 

@@ -6,7 +6,7 @@ fingerprints for the person to compare; they do not communicate with each other.
 If the whole-file fingerprints differ, Paircomp guides both instances to the
 first differing line, then offers to locate the first differing byte within it.
 For valid UTF-8 lines, the result also includes a character position. The
-[MVP specification](https://github.com/justinrdonnelly/paircomp/blob/main/paircomp_mvp_implementation_spec.md)
+[Paircomp specification](https://github.com/justinrdonnelly/paircomp/blob/main/paircomp_spec.md)
 defines the comparison protocol and position semantics.
 
 ## Build and run
@@ -125,7 +125,7 @@ remain stable and that both people provide consistent answers.
 
 ## Scope and licenses
 
-The MVP localizes the first difference to a line and optionally a byte, with
+Paircomp localizes the first difference to a line and optionally a byte, with
 UTF-8 character positions where available. It has no networking, file transfer,
 automatic repair, directory comparison, or GUI.
 
