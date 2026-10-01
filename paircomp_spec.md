@@ -301,6 +301,7 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 
 ### 7.1 Prompt input
 
+- Prompt input must be valid UTF-8. Non-UTF-8 input is treated as an input error and aborts the session with exit status 2.
 - Match prompts accept `y`/`yes` and `n`/`no`, case-insensitively, after trimming surrounding whitespace.
 - Whole-file, line-prefix, and byte-prefix match prompts display `[y/n]` and have no default. A submitted blank or whitespace-only answer is invalid and repeats the prompt.
 - The continuation prompt `[Y/n]` accepts the same answers but defaults to `yes` on a submitted blank or whitespace-only answer. Tell users to choose the same continuation answer on both copies.
