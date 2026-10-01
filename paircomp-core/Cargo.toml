@@ -1,6 +1,8 @@
 [package]
 name = "paircomp-core"
 description = "File inspection and comparison logic for Paircomp"
+keywords = ["file-comparison", "fingerprint", "bisection"]
+categories = ["filesystem"]
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
