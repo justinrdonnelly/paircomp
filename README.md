@@ -9,6 +9,19 @@ For valid UTF-8 lines, the result also includes a character position. The
 [Paircomp specification](https://github.com/justinrdonnelly/paircomp/blob/main/paircomp_spec.md)
 defines the comparison protocol and position semantics.
 
+## Prebuilt Linux downloads
+
+Download a Linux archive for your system's CPU architecture from the
+[GitHub releases](https://github.com/justinrdonnelly/paircomp/releases).
+Choose the `linux-musl` archive if you are unsure whether your system's glibc
+version is compatible. The musl executable is statically linked and does not
+require glibc or a separate musl installation.
+
+The `linux-gnu` archive uses your system's glibc. Check that release's notes for
+its minimum glibc version and tested distributions before choosing it.
+Extract the archive and run the included `paircomp` executable on each system.
+Prebuilt downloads do not require Rust to be installed.
+
 ## Build and run
 
 The minimum supported Rust version is **1.98.1**.
