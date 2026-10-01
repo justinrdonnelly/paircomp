@@ -3,7 +3,7 @@ name = "paircomp"
 description = "Compare files on separate systems and find their first differing line or byte"
 keywords = ["file-comparison", "fingerprint", "air-gapped", "cli"]
 categories = ["command-line-utilities", "filesystem"]
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,4 +16,4 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
-paircomp-core = { path = "../paircomp-core", version = "0.1.0" }
+paircomp-core = { path = "../paircomp-core", version = "1.0.0" }
