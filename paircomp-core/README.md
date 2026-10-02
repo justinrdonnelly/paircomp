@@ -13,6 +13,11 @@ API. `file.rs` implements file inspection and through-line hashing; `search.rs`
 contains both search states and their private bisection bounds. `within_line.rs`
 implements line-local inspection, prefix hashing, and UTF-8 position mapping.
 
+`Fingerprint` retains the complete 256-bit BLAKE3 digest, and equality compares
+all 32 bytes. Frontends choose how to display it using `Fingerprint::as_bytes`.
+The Paircomp CLI shows the first 8 hexadecimal characters by default, or all 64
+with `--full-digest`; this display choice does not change the library's digests.
+
 The public API includes `inspect_file`, `fingerprint_file`,
 `fingerprint_through_line`, and `LineSearch`. Lines end at LF; a final LF does not
 create an extra line. A prefix request beyond the local end of file fingerprints

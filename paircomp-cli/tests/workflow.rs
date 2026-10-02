@@ -1,4 +1,4 @@
-use paircomp_core::{fingerprint_through_line, inspect_file};
+use paircomp_core::{fingerprint_line_prefix, fingerprint_through_line, inspect_file, Fingerprint};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -41,8 +41,13 @@ impl Drop for Fixture {
 }
 
 fn invoke(path: &Path, answers: &str) -> Output {
+    invoke_with_args(path, &[], answers)
+}
+
+fn invoke_with_args(path: &Path, args: &[&str], answers: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_paircomp"))
         .arg(path)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -65,20 +70,40 @@ fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
 }
 
+fn digest_hex(fingerprint: Fingerprint) -> String {
+    fingerprint
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn fingerprints(output: &Output) -> Vec<String> {
+    stdout(output)
+        .lines()
+        .filter_map(|line| line.strip_prefix("Fingerprint: "))
+        .map(str::to_owned)
+        .collect()
+}
+
 #[test]
 fn help_version_and_argument_errors() {
     let binary = env!("CARGO_BIN_EXE_paircomp");
     let help = Command::new(binary).arg("--help").output().unwrap();
     assert_eq!(help.status.code(), Some(0));
-    assert!(stdout(&help).contains("Usage: paircomp <FILE>"));
+    assert!(stdout(&help).contains("Usage: paircomp [OPTIONS] <FILE>"));
+    assert!(stdout(&help).contains("--full-digest"));
+    assert!(stdout(&help).contains("Display all 64 hexadecimal digits instead of the first 8"));
 
     let version = Command::new(binary).arg("--version").output().unwrap();
     assert_eq!(version.status.code(), Some(0));
     assert!(stdout(&version).contains(concat!("paircomp ", env!("CARGO_PKG_VERSION"))));
 
-    let missing = Command::new(binary).output().unwrap();
-    assert_eq!(missing.status.code(), Some(2));
-    assert!(stderr(&missing).contains("<FILE>"));
+    for args in [&[][..], &["--full-digest"][..]] {
+        let missing = Command::new(binary).args(args).output().unwrap();
+        assert_eq!(missing.status.code(), Some(2));
+        assert!(stderr(&missing).contains("<FILE>"));
+    }
 
     let extra = Command::new(binary)
         .args(["first", "second"])
@@ -90,22 +115,62 @@ fn help_version_and_argument_errors() {
 #[test]
 fn confirmed_whole_file_match_exits_successfully() {
     let fixture = Fixture::new(b"same\nbytes\n");
-    let output = invoke(fixture.path(), " YES \n");
-    assert_eq!(output.status.code(), Some(0));
-    let text = stdout(&output);
-    assert!(text.contains("Lines: 2\nSize: 11 bytes\n"));
-    let expected_digest = inspect_file(fixture.path())
-        .unwrap()
-        .fingerprint
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert!(text.contains(&format!("Fingerprint: {expected_digest}\n")));
-    assert!(text.contains("Keep both files unchanged"));
-    assert!(text.contains("Files match."));
-    assert!(!text.contains("Line count displayed by the other copy"));
-    assert!(output.stderr.is_empty());
+    let expected_digest = digest_hex(inspect_file(fixture.path()).unwrap().fingerprint);
+    for (args, length) in [(&[][..], 8), (&["--full-digest"][..], 64)] {
+        let output = invoke_with_args(fixture.path(), args, " YES \n");
+        assert_eq!(output.status.code(), Some(0));
+        let text = stdout(&output);
+        assert!(text.contains("Lines: 2\nSize: 11 bytes\n"));
+        assert_eq!(fingerprints(&output), [&expected_digest[..length]]);
+        assert!(text.contains("Use the same fingerprint display mode on both copies."));
+        assert!(text.contains("Keep both files unchanged"));
+        assert!(text.contains("Files match."));
+        assert!(!text.contains("Line count displayed by the other copy"));
+        assert!(!text.contains("Continue within this line"));
+        assert!(!text.contains("Compare line"));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn paired_cli_uses_selected_fingerprint_length_at_every_stage() {
+    let fixture = Fixture::new("same\ncafé".as_bytes());
+    let other = Fixture::new("same\ncafè".as_bytes());
+    let expected = [
+        inspect_file(fixture.path()).unwrap().fingerprint,
+        fingerprint_through_line(fixture.path(), 1).unwrap(),
+        fingerprint_line_prefix(fixture.path(), 2, 3).unwrap(),
+        fingerprint_line_prefix(fixture.path(), 2, 4).unwrap(),
+    ]
+    .map(digest_hex);
+    for (args, length) in [(&[][..], 8), (&["--full-digest"][..], 64)] {
+        let output = invoke_with_args(fixture.path(), args, "n\n2\ny\n\n5\ny\ny\n");
+        let other_output = invoke_with_args(other.path(), args, "n\n2\ny\n\n5\ny\ny\n");
+        let local_hashes = fingerprints(&output);
+        let other_hashes = fingerprints(&other_output);
+        assert_eq!(
+            local_hashes,
+            expected
+                .iter()
+                .map(|digest| &digest[..length])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(other_hashes.len(), 4);
+        assert_ne!(local_hashes[0], other_hashes[0]);
+        assert_eq!(local_hashes[1..], other_hashes[1..]);
+        for output in [&output, &other_output] {
+            assert_eq!(output.status.code(), Some(1));
+            assert!(output.stderr.is_empty());
+            assert!(fingerprints(output)
+                .iter()
+                .all(|digest| digest.len() == length));
+            let text = stdout(output);
+            assert!(text.contains("Compare through line 1:"));
+            assert!(text.contains("Compare line 2 through byte 3:"));
+            assert!(text.contains("Compare line 2 through byte 4:"));
+            assert!(text.contains("First divergence: line 2, byte 5 (UTF-8 character 4)"));
+        }
+    }
 }
 
 #[test]
@@ -117,12 +182,8 @@ fn equal_counts_follow_core_search_and_report_a_difference() {
     assert!(text.contains("Line count displayed by the other copy: "));
     assert!(text.contains("Compare through line 2:"));
     assert!(text.contains("Compare through line 3:"));
-    let prefix_digest = fingerprint_through_line(fixture.path(), 2)
-        .unwrap()
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let prefix_digest = digest_hex(fingerprint_through_line(fixture.path(), 2).unwrap());
+    let prefix_digest = &prefix_digest[..8];
     assert!(text.contains(&format!(
         "Compare through line 2:\nFingerprint: {prefix_digest}\n"
     )));
@@ -398,13 +459,6 @@ fn paired_cli_instances_stay_aligned_after_retries_and_default_continuation() {
         assert!(text.contains("First divergence: line 2, byte 5 (UTF-8 character 4)"));
     }
     // The whole files differ, but all three subsequent prefix comparisons match.
-    let fingerprints = |output: &Output| {
-        stdout(output)
-            .lines()
-            .filter(|line| line.starts_with("Fingerprint:"))
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    };
     let first_hashes = fingerprints(&first_output);
     let second_hashes = fingerprints(&second_output);
     assert_eq!(first_hashes.len(), 4);

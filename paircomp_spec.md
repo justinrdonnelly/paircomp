@@ -209,9 +209,11 @@ Feed raw file bytes into the hash. Do not normalize:
 
 Paircomp is establishing exact file equality.
 
-Internally retain the full 256-bit digest. The CLI displays all 64 lowercase hexadecimal digits for whole-file and prefix comparisons; it does not truncate fingerprints.
+Internally retain the full 256-bit digest; core fingerprint equality compares all 32 bytes. By default, the CLI displays the first 8 lowercase hexadecimal digits (the first 4 digest bytes, or 32 bits). With `--full-digest`, display all 64 lowercase hexadecimal digits (256 bits). Apply the selected display mode to every whole-file, through-line, and within-line prefix comparison in the session. Both instances must use the same display mode; tell users this alongside the file-stability notice.
 
-Matching fingerprints provide strong evidence of equality, not an absolute proof. Any future change to truncate displayed fingerprints must specify the truncation length and document the resulting collision probability.
+Under the usual ideal-hash model, two distinct byte sequences accidentally match in the displayed fingerprint with probability `1 / 2^32` per comparison by default (about 1 in 4.29 billion), or `1 / 2^256` with `--full-digest`. Across at most `q` comparisons in a session, a union bound gives a probability of any accidental false match of at most `q / 2^32` by default, or `q / 2^256` in full-digest mode, capped at 1. For up to 40 comparisons, the default bound is about 1 in 107 million sessions. Count the whole-file comparison and both prefix-search stages; comparisons of identical byte sequences cannot produce a false match.
+
+Matching fingerprints provide evidence of equality, not an absolute proof. A false match can incorrectly establish file equality or misdirect localization. These probabilities assume accidental differences; short fingerprints offer little resistance to deliberately constructed collisions. Full-digest mode provides stronger evidence. Any future display-length change must document its length and collision probability.
 
 ## 6. Line semantics and search algorithm
 
@@ -281,6 +283,7 @@ Use `clap` with its derive API. The current CLI surface is:
 
 ```console
 paircomp FILE
+paircomp --full-digest FILE
 paircomp --help
 paircomp --version
 ```
@@ -290,6 +293,7 @@ The CLI should:
 - validate that `FILE` can be opened as a regular input file,
 - call `paircomp-core`,
 - format returned metadata/fingerprints,
+- select the first 8 hexadecimal digits by default or all 64 with `--full-digest`, consistently throughout the session,
 - prompt for match/no-match answers,
 - obtain the other instance's line count after a whole-file mismatch,
 - offer within-line continuation, then display and obtain the selected line's byte counts,
@@ -320,6 +324,7 @@ Lines: 1247
 Size: 38291 bytes
 Fingerprint: <fingerprint>
 
+Use the same fingerprint display mode on both copies.
 Keep both files unchanged during this session. Restart after editing either file.
 
 Does this fingerprint match the other copy? [y/n] n
@@ -398,7 +403,7 @@ Use multiple fixtures for the added/absent-line case when useful—for example, 
 
 Include paired-state tests that simulate both isolated instances using two fixtures. Construct one search with counts `(a, b)` and the other with `(b, a)`. At each step, assert that both request the same line, compute each fixture's actual prefix fingerprint, and feed the same equality result into both states. Assert that both terminate at the expected first divergent line. Cover equal and unequal line counts, an appended line, empty versus nonempty input, and differing final-newline state. For identical files, verify that the whole-file comparison completes without creating a line search.
 
-CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify recovery from repeated invalid answers at every prompt, including blank or whitespace-only match answers and malformed counts. Retries must preserve fingerprints, requested positions, and final results; corrected input completes with status 0 or 1. Verify that stdin EOF and partial answers without a newline still abort with status 2, including after invalid input. Do not duplicate core algorithm tests through the CLI.
+CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that default fingerprints are exactly the first 8 lowercase hexadecimal digits of the core digest and that `--full-digest` displays all 64 digits, including whole-file, through-line, and within-line comparisons. Cover the option in help and argument handling, paired sessions in both display modes, and whole-file matches bypassing both searches in either mode. Verify recovery from repeated invalid answers at every prompt, including blank or whitespace-only match answers and malformed counts. Retries must preserve fingerprints, requested positions, and final results; corrected input completes with status 0 or 1. Verify that stdin EOF and partial answers without a newline still abort with status 2, including after invalid input. Do not duplicate core algorithm tests through the CLI.
 
 Within-line tests must also cover:
 

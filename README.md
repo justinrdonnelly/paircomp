@@ -44,6 +44,16 @@ named `paircomp`; it also supports `--help` and `--version`. `FILE` must be a
 readable regular file. File contents may contain arbitrary bytes; UTF-8 is not
 required.
 
+Fingerprints show the first **8 hexadecimal characters** by default. To display
+the full digest at every comparison stage, run:
+
+```sh
+paircomp --full-digest FILE
+```
+
+Use the same display mode on both systems. The collision probabilities for each
+mode are explained under [fingerprint limits](#exit-status-and-fingerprint-limits).
+
 ## Compare two copies
 
 1. Start `paircomp FILE` separately on both systems. Compare the displayed
@@ -131,13 +141,31 @@ position. Paircomp does not decode other encodings or normalize text.
 
 Paircomp compares raw bytes using BLAKE3. It does not normalize whitespace,
 newlines, or encoding. Lines end at LF (`0x0A`); a CR (`0x0D`) remains part of
-the line. A final LF does not create an extra line. The CLI displays the full
-256-bit digest as 64 hexadecimal characters for both whole files and prefixes;
-it does not truncate fingerprints. Under the usual ideal-hash model, a
-coincidental match for two distinct byte sequences has probability about
-1 in 2^256 per comparison. Matching fingerprints are therefore strong evidence,
-not an absolute proof of byte equality. The comparison also assumes the files
-remain stable and that both people provide consistent answers.
+the line. A final LF does not create an extra line. The library always retains
+the full 256-bit digest. The CLI displays its first 8 lowercase hexadecimal
+characters (32 bits) by default, or all 64 characters with `--full-digest`, for
+whole files, file prefixes, and within-line prefixes.
+
+Under the usual ideal-hash model, two distinct byte sequences accidentally
+produce the same displayed fingerprint with the following probabilities:
+
+| Display mode | Hexadecimal characters | False match per comparison |
+|---|---:|---|
+| Default | 8 | 1 in 2^32 (about 4.29 billion) |
+| `--full-digest` | 64 | 1 in 2^256 |
+
+For a session with at most `q` comparisons, the default mode's probability of
+any accidental false match is at most `q / 2^32`, capped at 1. With up to 40
+comparisons, that bound is about 1 in 107 million sessions. This counts the
+whole-file and both prefix-search stages; comparisons of identical bytes cannot
+produce a false match. A false match can incorrectly report file equality or
+misdirect a search. Matching fingerprints are evidence of equality, not an
+absolute proof.
+
+These probabilities describe accidental differences. Short fingerprints offer
+little resistance to deliberately constructed collisions; use `--full-digest`
+for stronger evidence. Both instances must use the same display mode, and the
+comparison also assumes stable files, accurate counts, and consistent answers.
 
 ## Scope and licenses
 

@@ -17,6 +17,10 @@ use std::process::ExitCode;
 struct Cli {
     /// Local file to compare
     file: PathBuf,
+
+    /// Display all 64 hexadecimal digits instead of the first 8
+    #[arg(long)]
+    full_digest: bool,
 }
 
 #[derive(Debug)]
@@ -53,6 +57,7 @@ fn main() -> ExitCode {
     let mut diagnostics = io::stderr().lock();
     match run(
         &cli.file,
+        cli.full_digest,
         &mut io::stdin().lock(),
         &mut io::stdout().lock(),
         &mut diagnostics,
@@ -70,6 +75,7 @@ fn main() -> ExitCode {
 /// Failed or aborted interactions return an error for `main` to report with status 2.
 fn run(
     path: &Path,
+    full_digest: bool,
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
@@ -81,9 +87,13 @@ fn run(
     writeln!(
         output,
         "Fingerprint: {}",
-        format_fingerprint(info.fingerprint)
+        format_fingerprint(info.fingerprint, full_digest)
     )?;
     writeln!(output)?;
+    writeln!(
+        output,
+        "Use the same fingerprint display mode on both copies."
+    )?;
     writeln!(
         output,
         "Keep both files unchanged during this session. Restart after editing either file."
@@ -114,7 +124,11 @@ fn run(
                 let fingerprint = fingerprint_through_line(path, line)?;
                 writeln!(output)?;
                 writeln!(output, "Compare through line {line}:")?;
-                writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
+                writeln!(
+                    output,
+                    "Fingerprint: {}",
+                    format_fingerprint(fingerprint, full_digest)
+                )?;
                 let matched = read_match(
                     input,
                     output,
@@ -140,7 +154,7 @@ fn run(
                     "Continue within this line? [Y/n] ",
                     Some(true),
                 )? {
-                    localize_byte(path, line, input, output, diagnostics)?;
+                    localize_byte(path, line, full_digest, input, output, diagnostics)?;
                 }
                 writeln!(output)?;
                 writeln!(
@@ -159,6 +173,7 @@ fn run(
 fn localize_byte(
     path: &Path,
     line: u64,
+    full_digest: bool,
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
@@ -184,7 +199,11 @@ fn localize_byte(
                 let fingerprint = fingerprint_line_prefix(path, line, byte)?;
                 writeln!(output)?;
                 writeln!(output, "Compare line {line} through byte {byte}:")?;
-                writeln!(output, "Fingerprint: {}", format_fingerprint(fingerprint))?;
+                writeln!(
+                    output,
+                    "Fingerprint: {}",
+                    format_fingerprint(fingerprint, full_digest)
+                )?;
                 let matched = read_match(
                     input,
                     output,
@@ -218,11 +237,13 @@ fn localize_byte(
     }
 }
 
-/// Formats the full digest as 64 lowercase hexadecimal digits without truncation.
-fn format_fingerprint(fingerprint: Fingerprint) -> String {
+/// Formats the first 8 lowercase hexadecimal digits, or all 64 in full-digest mode.
+fn format_fingerprint(fingerprint: Fingerprint, full_digest: bool) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut formatted = String::with_capacity(64);
-    for &byte in fingerprint.as_bytes() {
+    let bytes = fingerprint.as_bytes();
+    let displayed = if full_digest { &bytes[..] } else { &bytes[..4] };
+    let mut formatted = String::with_capacity(displayed.len() * 2);
+    for &byte in displayed {
         formatted.push(char::from(HEX[usize::from(byte >> 4)]));
         formatted.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
