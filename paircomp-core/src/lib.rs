@@ -10,7 +10,8 @@
 //!    match, the comparison is complete.
 //! 2. On a mismatch, exchange line counts and construct a [`LineSearch`]. Use
 //!    [`fingerprint_through_line`] for each requested comparison and pass the
-//!    answer to [`LineSearch::record_result`] until the differing line is known.
+//!    answer as a [`Comparison`] to [`LineSearch::record_result`] until the
+//!    differing line is known.
 //! 3. To continue within that line, call [`inspect_line`], exchange byte lengths
 //!    (zero for an absent line), and construct a [`ByteSearch`]. Compare
 //!    [`fingerprint_line_prefix`] results and call [`ByteSearch::record_result`].
@@ -31,7 +32,7 @@
 //! ```
 //! use paircomp_core::{
 //!     fingerprint_line_prefix, fingerprint_through_line, inspect_file, inspect_line,
-//!     utf8_character_position, ByteSearch, ByteSearchStep, LineSearch, LineSearchStep,
+//!     utf8_character_position, ByteSearch, ByteSearchStep, Comparison, LineSearch, LineSearchStep,
 //! };
 //! use std::fs;
 //!
@@ -56,7 +57,12 @@
 //!                 let fingerprint = fingerprint_through_line(&local_path, line)?;
 //!                 let other_fingerprint = fingerprint_through_line(&other_path, line)?;
 //!                 // The frontend would ask whether the displayed fingerprints match.
-//!                 search.record_result(fingerprint == other_fingerprint)?;
+//!                 let comparison = if fingerprint == other_fingerprint {
+//!                     Comparison::Match
+//!                 } else {
+//!                     Comparison::Differ
+//!                 };
+//!                 search.record_result(comparison)?;
 //!             }
 //!             LineSearchStep::DifferenceAtLine { line } => break line,
 //!         }
@@ -73,7 +79,12 @@
 //!                 // These raw-byte prefixes can end inside a UTF-8 code point.
 //!                 let fingerprint = fingerprint_line_prefix(&local_path, line, byte)?;
 //!                 let other_fingerprint = fingerprint_line_prefix(&other_path, line, byte)?;
-//!                 search.record_result(fingerprint == other_fingerprint)?;
+//!                 let comparison = if fingerprint == other_fingerprint {
+//!                     Comparison::Match
+//!                 } else {
+//!                     Comparison::Differ
+//!                 };
+//!                 search.record_result(comparison)?;
 //!             }
 //!             ByteSearchStep::DifferenceAtByte { byte } => break byte,
 //!         }
@@ -128,7 +139,7 @@ mod file;
 mod search;
 mod within_line;
 pub use file::{fingerprint_file, fingerprint_through_line, inspect_file};
-pub use search::{ByteSearch, ByteSearchStep, LineSearch, LineSearchStep};
+pub use search::{ByteSearch, ByteSearchStep, Comparison, LineSearch, LineSearchStep};
 pub use within_line::{fingerprint_line_prefix, inspect_line, utf8_character_position};
 
 /// Metadata calculated from the bytes read from a regular file.

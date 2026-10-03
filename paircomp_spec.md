@@ -135,6 +135,11 @@ Represent bisection as library state rather than embedding midpoint arithmetic i
 Illustrative API:
 
 ```rust
+pub enum Comparison {
+    Match,
+    Differ,
+}
+
 pub struct LineSearch { /* bounds/state */ }
 
 pub enum LineSearchStep {
@@ -146,11 +151,13 @@ impl LineSearch {
     /// Construct only after the user reports a whole-file mismatch.
     pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error>;
     pub fn current_step(&self) -> LineSearchStep;
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error>;
 }
 ```
 
 This exact API is not required, but preserve the separation of responsibilities. A future GUI should be able to drive exactly the same search state machine without emulating CLI prompts.
+
+Both searches accept the shared `Comparison` enum: `Comparison::Match` reports matching fingerprints for the current prefix, and `Comparison::Differ` reports differing fingerprints. This replaces the boolean argument from 1.0.0; migrating callers must replace `true` with `Comparison::Match` and `false` with `Comparison::Differ`, including explicit mapping of computed equality results. Search bounds, transitions, and the comparison protocol are unchanged by this API revision.
 
 Construction must reject a reported whole-file mismatch when both line counts are zero. Calling `current_step` must not advance the search; `record_result` applies an answer to the current comparison. Recording an answer after the search has completed must return an error. The core owns the bounds and transitions specified in section 6.
 
@@ -185,7 +192,7 @@ pub enum ByteSearchStep {
 impl ByteSearch {
     pub fn new(local_byte_len: u64, other_byte_len: u64) -> Result<Self, Error>;
     pub fn current_step(&self) -> ByteSearchStep;
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error>;
 }
 ```
 

@@ -1,5 +1,18 @@
 use crate::Error;
 
+/// The caller's answer to a fingerprint comparison on the two copies.
+///
+/// Pass the same answer to [`LineSearch::record_result`] or
+/// [`ByteSearch::record_result`] on both instances. This describes the requested
+/// prefix comparison, rather than the final location of a difference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Comparison {
+    /// The two fingerprints match.
+    Match,
+    /// The two fingerprints differ.
+    Differ,
+}
+
 /// A prefix comparison requested by [`LineSearch`], or its completed result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LineSearchStep {
@@ -52,14 +65,14 @@ impl LineSearch {
     /// # Examples
     ///
     /// ```
-    /// use paircomp_core::{LineSearch, LineSearchStep};
+    /// use paircomp_core::{Comparison, LineSearch, LineSearchStep};
     ///
     /// // The whole-file fingerprints differ; the copies have 3 and 4 lines.
     /// let mut search = LineSearch::new(3, 4)?;
     /// assert_eq!(search.current_step(), LineSearchStep::CompareThroughLine { line: 2 });
-    /// search.record_result(true)?; // The prefixes through line 2 match.
+    /// search.record_result(Comparison::Match)?;
     /// assert_eq!(search.current_step(), LineSearchStep::CompareThroughLine { line: 3 });
-    /// search.record_result(false)?; // The prefixes through line 3 differ.
+    /// search.record_result(Comparison::Differ)?;
     /// assert_eq!(search.current_step(), LineSearchStep::DifferenceAtLine { line: 3 });
     /// # Ok::<(), paircomp_core::Error>(())
     /// ```
@@ -86,17 +99,18 @@ impl LineSearch {
 
     /// Applies the answer to the comparison returned by [`Self::current_step`].
     ///
-    /// Pass `true` when the two fingerprints from [`crate::fingerprint_through_line`]
-    /// match, or `false` when they differ. A match excludes the prefix through the
-    /// requested line; a mismatch retains that position as a candidate. The
-    /// caller must supply the answer for the current comparison on both copies.
+    /// Pass [`Comparison::Match`] when the two fingerprints from
+    /// [`crate::fingerprint_through_line`] match, or [`Comparison::Differ`] when
+    /// they differ. A match excludes the prefix through the requested line; a
+    /// mismatch retains that position as a candidate. The caller must supply
+    /// the answer for the current comparison on both copies.
     ///
     /// # Errors
     ///
     /// Returns [`Error::SearchAlreadyComplete`] if the result is already known.
     /// An error leaves the search unchanged.
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error> {
-        self.bounds.record_result(matched)
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error> {
+        self.bounds.record_result(comparison)
     }
 }
 
@@ -155,14 +169,14 @@ impl ByteSearch {
     /// # Examples
     ///
     /// ```
-    /// use paircomp_core::{ByteSearch, ByteSearchStep};
+    /// use paircomp_core::{ByteSearch, ByteSearchStep, Comparison};
     ///
     /// // The differing lines are UTF-8 "café" and "cafè", each 5 bytes long.
     /// let mut search = ByteSearch::new(5, 5)?;
     /// assert_eq!(search.current_step(), ByteSearchStep::CompareThroughByte { byte: 3 });
-    /// search.record_result(true)?; // "caf" matches.
+    /// search.record_result(Comparison::Match)?; // "caf" matches.
     /// assert_eq!(search.current_step(), ByteSearchStep::CompareThroughByte { byte: 4 });
-    /// search.record_result(true)?; // The first byte of the final code point matches.
+    /// search.record_result(Comparison::Match)?; // The first byte of the final code point matches.
     /// assert_eq!(search.current_step(), ByteSearchStep::DifferenceAtByte { byte: 5 });
     /// # Ok::<(), paircomp_core::Error>(())
     /// ```
@@ -189,17 +203,18 @@ impl ByteSearch {
 
     /// Applies the answer to the comparison returned by [`Self::current_step`].
     ///
-    /// Pass `true` when the two fingerprints from [`crate::fingerprint_line_prefix`]
-    /// match, or `false` when they differ. A match excludes the prefix through the
-    /// requested byte; a mismatch retains that position as a candidate. The
-    /// caller must supply the answer for the current comparison on both copies.
+    /// Pass [`Comparison::Match`] when the two fingerprints from
+    /// [`crate::fingerprint_line_prefix`] match, or [`Comparison::Differ`] when
+    /// they differ. A match excludes the prefix through the requested byte; a
+    /// mismatch retains that position as a candidate. The caller must supply
+    /// the answer for the current comparison on both copies.
     ///
     /// # Errors
     ///
     /// Returns [`Error::SearchAlreadyComplete`] if the result is already known.
     /// An error leaves the search unchanged.
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error> {
-        self.bounds.record_result(matched)
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error> {
+        self.bounds.record_result(comparison)
     }
 }
 
@@ -230,12 +245,11 @@ impl SearchBounds {
         (self.low < self.high).then(|| self.low + (self.high - self.low) / 2)
     }
 
-    fn record_result(&mut self, matched: bool) -> Result<(), Error> {
+    fn record_result(&mut self, comparison: Comparison) -> Result<(), Error> {
         let midpoint = self.midpoint().ok_or(Error::SearchAlreadyComplete)?;
-        if matched {
-            self.low = midpoint + 1;
-        } else {
-            self.high = midpoint;
+        match comparison {
+            Comparison::Match => self.low = midpoint + 1,
+            Comparison::Differ => self.high = midpoint,
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 use paircomp_core::{
     fingerprint_file, fingerprint_line_prefix, fingerprint_through_line, inspect_file,
-    inspect_line, utf8_character_position, ByteSearch, ByteSearchStep, Error, Fingerprint,
-    LineSearch, LineSearchStep,
+    inspect_line, utf8_character_position, ByteSearch, ByteSearchStep, Comparison, Error,
+    Fingerprint, LineSearch, LineSearchStep,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -231,24 +231,26 @@ fn search_state_follows_midpoint_bounds_and_rejects_invalid_operations() {
         search.current_step(),
         LineSearchStep::CompareThroughLine { line: 2 }
     );
-    search.record_result(true).unwrap();
+    search.record_result(Comparison::Match).unwrap();
     assert_eq!(
         search.current_step(),
         LineSearchStep::CompareThroughLine { line: 3 }
     );
-    search.record_result(true).unwrap();
+    search.record_result(Comparison::Match).unwrap();
     assert_eq!(
         search.current_step(),
         LineSearchStep::DifferenceAtLine { line: 4 }
     );
-    assert!(matches!(
-        search.record_result(false),
-        Err(Error::SearchAlreadyComplete)
-    ));
-    assert_eq!(
-        search.current_step(),
-        LineSearchStep::DifferenceAtLine { line: 4 }
-    );
+    for comparison in [Comparison::Match, Comparison::Differ] {
+        assert!(matches!(
+            search.record_result(comparison),
+            Err(Error::SearchAlreadyComplete)
+        ));
+        assert_eq!(
+            search.current_step(),
+            LineSearchStep::DifferenceAtLine { line: 4 }
+        );
+    }
 
     let mut first_line = LineSearch::new(1, 0).unwrap();
     assert_eq!(
@@ -256,7 +258,7 @@ fn search_state_follows_midpoint_bounds_and_rejects_invalid_operations() {
         LineSearchStep::DifferenceAtLine { line: 1 }
     );
     assert!(matches!(
-        first_line.record_result(true),
+        first_line.record_result(Comparison::Match),
         Err(Error::SearchAlreadyComplete)
     ));
 }
@@ -274,7 +276,7 @@ fn search_midpoint_does_not_overflow_at_maximum_line_count() {
             LineSearchStep::CompareThroughLine { line: 1 << 63 }
         );
         for _ in 0..63 {
-            search.record_result(true).unwrap();
+            search.record_result(Comparison::Match).unwrap();
         }
         assert_eq!(
             search.current_step(),
@@ -310,10 +312,15 @@ fn paired_search(first_bytes: &[u8], second_bytes: &[u8]) -> Option<(u64, Vec<u6
             LineSearchStep::CompareThroughLine { line } => {
                 assert!(line <= first_info.line_count.min(second_info.line_count));
                 comparisons.push(line);
-                let matched = fingerprint_through_line(first.path(), line).unwrap()
-                    == fingerprint_through_line(second.path(), line).unwrap();
-                first_search.record_result(matched).unwrap();
-                second_search.record_result(matched).unwrap();
+                let comparison = if fingerprint_through_line(first.path(), line).unwrap()
+                    == fingerprint_through_line(second.path(), line).unwrap()
+                {
+                    Comparison::Match
+                } else {
+                    Comparison::Differ
+                };
+                first_search.record_result(comparison).unwrap();
+                second_search.record_result(comparison).unwrap();
             }
             LineSearchStep::DifferenceAtLine { line } => return Some((line, comparisons)),
         }
@@ -447,29 +454,31 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
         ByteSearchStep::CompareThroughByte { byte: 4 }
     );
     assert_eq!(search.current_step(), search.current_step());
-    search.record_result(true).unwrap();
+    search.record_result(Comparison::Match).unwrap();
     assert_eq!(
         search.current_step(),
         ByteSearchStep::CompareThroughByte { byte: 6 }
     );
-    search.record_result(false).unwrap();
+    search.record_result(Comparison::Differ).unwrap();
     assert_eq!(
         search.current_step(),
         ByteSearchStep::CompareThroughByte { byte: 5 }
     );
-    search.record_result(false).unwrap();
+    search.record_result(Comparison::Differ).unwrap();
     assert_eq!(
         search.current_step(),
         ByteSearchStep::DifferenceAtByte { byte: 5 }
     );
-    assert!(matches!(
-        search.record_result(true),
-        Err(Error::SearchAlreadyComplete)
-    ));
-    assert_eq!(
-        search.current_step(),
-        ByteSearchStep::DifferenceAtByte { byte: 5 }
-    );
+    for comparison in [Comparison::Match, Comparison::Differ] {
+        assert!(matches!(
+            search.record_result(comparison),
+            Err(Error::SearchAlreadyComplete)
+        ));
+        assert_eq!(
+            search.current_step(),
+            ByteSearchStep::DifferenceAtByte { byte: 5 }
+        );
+    }
 
     let mut single = ByteSearch::new(0, 1).unwrap();
     assert_eq!(
@@ -477,7 +486,7 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
         ByteSearchStep::DifferenceAtByte { byte: 1 }
     );
     assert!(matches!(
-        single.record_result(false),
+        single.record_result(Comparison::Differ),
         Err(Error::SearchAlreadyComplete)
     ));
     for counts in [(0, u64::MAX), (u64::MAX, 0)] {
@@ -492,7 +501,8 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
         (u64::MAX - 1, u64::MAX),
         (u64::MAX, u64::MAX - 1),
     ] {
-        for matched in [false, true] {
+        for (comparison, expected_byte) in [(Comparison::Differ, 1), (Comparison::Match, u64::MAX)]
+        {
             let mut search = ByteSearch::new(counts.0, counts.1).unwrap();
             assert_eq!(
                 search.current_step(),
@@ -502,12 +512,12 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
                 search.current_step(),
                 ByteSearchStep::CompareThroughByte { .. }
             ) {
-                search.record_result(matched).unwrap();
+                search.record_result(comparison).unwrap();
             }
             assert_eq!(
                 search.current_step(),
                 ByteSearchStep::DifferenceAtByte {
-                    byte: if matched { u64::MAX } else { 1 }
+                    byte: expected_byte
                 }
             );
         }
@@ -541,10 +551,15 @@ fn paired_byte_search(
             ByteSearchStep::CompareThroughByte { byte } => {
                 assert!(byte <= first_len.min(second_len));
                 comparisons.push(byte);
-                let matched = fingerprint_line_prefix(first.path(), line, byte).unwrap()
-                    == fingerprint_line_prefix(second.path(), line, byte).unwrap();
-                a.record_result(matched).unwrap();
-                b.record_result(matched).unwrap();
+                let comparison = if fingerprint_line_prefix(first.path(), line, byte).unwrap()
+                    == fingerprint_line_prefix(second.path(), line, byte).unwrap()
+                {
+                    Comparison::Match
+                } else {
+                    Comparison::Differ
+                };
+                a.record_result(comparison).unwrap();
+                b.record_result(comparison).unwrap();
             }
             ByteSearchStep::DifferenceAtByte { byte } => {
                 assert_eq!(byte, expected_byte);

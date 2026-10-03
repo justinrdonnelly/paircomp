@@ -22,7 +22,9 @@ The public API includes `inspect_file`, `fingerprint_file`,
 `fingerprint_through_line`, and `LineSearch`. Lines end at LF; a final LF does not
 create an extra line. A prefix request beyond the local end of file fingerprints
 all available bytes. The caller compares fingerprints from the two systems and
-feeds each match result to the search state.
+feeds each result to `record_result` as `Comparison::Match` or
+`Comparison::Differ`. The same enum is used by both searches; callers migrating
+from 1.0.0 must replace the former `true`/`false` arguments with these variants.
 
 Both searches use the shared count as the upper bound when counts are equal,
 or one past the shorter count when they differ. Requested comparisons stay
