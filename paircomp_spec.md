@@ -135,6 +135,11 @@ Represent bisection as library state rather than embedding midpoint arithmetic i
 Illustrative API:
 
 ```rust
+pub enum Comparison {
+    Match,
+    Differ,
+}
+
 pub struct LineSearch { /* bounds/state */ }
 
 pub enum LineSearchStep {
@@ -146,11 +151,13 @@ impl LineSearch {
     /// Construct only after the user reports a whole-file mismatch.
     pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error>;
     pub fn current_step(&self) -> LineSearchStep;
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error>;
 }
 ```
 
 This exact API is not required, but preserve the separation of responsibilities. A future GUI should be able to drive exactly the same search state machine without emulating CLI prompts.
+
+Both searches accept the shared `Comparison` enum: `Comparison::Match` reports matching fingerprints for the current prefix, and `Comparison::Differ` reports differing fingerprints. This replaces the boolean argument from 1.0.0; migrating callers must replace `true` with `Comparison::Match` and `false` with `Comparison::Differ`, including explicit mapping of computed equality results. Search bounds, transitions, and the comparison protocol are unchanged by this API revision.
 
 Construction must reject a reported whole-file mismatch when both line counts are zero. Calling `current_step` must not advance the search; `record_result` applies an answer to the current comparison. Recording an answer after the search has completed must return an error. The core owns the bounds and transitions specified in section 6.
 
@@ -185,7 +192,7 @@ pub enum ByteSearchStep {
 impl ByteSearch {
     pub fn new(local_byte_len: u64, other_byte_len: u64) -> Result<Self, Error>;
     pub fn current_step(&self) -> ByteSearchStep;
-    pub fn record_result(&mut self, matched: bool) -> Result<(), Error>;
+    pub fn record_result(&mut self, comparison: Comparison) -> Result<(), Error>;
 }
 ```
 
@@ -209,7 +216,9 @@ Feed raw file bytes into the hash. Do not normalize:
 
 Paircomp is establishing exact file equality.
 
-Internally retain the full 256-bit digest; core fingerprint equality compares all 32 bytes. By default, the CLI displays the first 8 lowercase hexadecimal digits (the first 4 digest bytes, or 32 bits). With `--full-digest`, display all 64 lowercase hexadecimal digits (256 bits). Apply the selected display mode to every whole-file, through-line, and within-line prefix comparison in the session. Both instances must use the same display mode; tell users this alongside the file-stability notice.
+Internally retain the full 256-bit digest; core fingerprint equality compares all 32 bytes. `Fingerprint` implements `Hash` over all 32 bytes for use in standard hash collections. Its `as_bytes()` accessor returns `&[u8; 32]`, and `AsRef<[u8]>` borrows the same complete digest as a byte slice without copying. These traits do not change BLAKE3 fingerprint generation.
+
+By default, the CLI displays the first 8 lowercase hexadecimal digits (the first 4 digest bytes, or 32 bits). With `--full-digest`, display all 64 lowercase hexadecimal digits (256 bits). Apply the selected display mode to every whole-file, through-line, and within-line prefix comparison in the session. Both instances must use the same display mode; tell users this alongside the file-stability notice.
 
 Under the usual ideal-hash model, two distinct byte sequences accidentally match in the displayed fingerprint with probability `1 / 2^32` per comparison by default (about 1 in 4.29 billion), or `1 / 2^256` with `--full-digest`. Across at most `q` comparisons in a session, a union bound gives a probability of any accidental false match of at most `q / 2^32` by default, or `q / 2^256` in full-digest mode, capped at 1. For up to 40 comparisons, the default bound is about 1 in 107 million sessions. Count the whole-file comparison and both prefix-search stages; comparisons of identical byte sequences cannot produce a false match.
 
@@ -375,6 +384,7 @@ Inspect/correct the corresponding files, then run paircomp again.
 ## 9. Error handling
 
 - Return library errors; do not print from `paircomp-core`.
+- The public core `Error` enum is non-exhaustive so future releases may add variants. Downstream matches must include a wildcard arm. Adding this policy breaks existing exhaustive matches; callers migrating from 1.0.0 must add a fallback arm.
 - CLI diagnostics go to stderr; normal interactive/output information goes to stdout.
 - Exit with status 0 when the user confirms a whole-file match, or for successful `--help`/`--version` output.
 - Exit with status 1 after the user declines within-line continuation or successfully completes the byte search.

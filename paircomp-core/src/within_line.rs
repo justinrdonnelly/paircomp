@@ -44,10 +44,13 @@ pub fn inspect_line(path: &Path, line: u64) -> Result<Option<LineInfo>, Error> {
 /// # Examples
 ///
 /// A line-local prefix excludes preceding lines and may end inside a UTF-8
-/// code point. Longer requests stop at the selected line's LF.
+/// code point. Longer requests stop at the selected line's LF. Reference files
+/// make the expected bytes explicit and are hashed with [`crate::fingerprint_file`].
 ///
 /// ```
-/// use paircomp_core::{fingerprint_line_prefix, fingerprint_through_line, inspect_line};
+/// use paircomp_core::{
+///     fingerprint_file, fingerprint_line_prefix, fingerprint_through_line, inspect_line,
+/// };
 /// use std::fs;
 ///
 /// let directory = std::env::temp_dir()
@@ -58,13 +61,20 @@ pub fn inspect_line(path: &Path, line: u64) -> Result<Option<LineInfo>, Error> {
 ///
 /// assert_eq!(inspect_line(&path, 2)?.map(|line| line.byte_len), Some(6));
 /// let prefix = fingerprint_line_prefix(&path, 2, 4)?;
-/// assert_eq!(prefix.as_bytes(), blake3::hash(b"caf\xc3").as_bytes());
+/// let prefix_path = directory.join("prefix.bin");
+/// fs::write(&prefix_path, b"caf\xc3")?;
+/// assert_eq!(prefix, fingerprint_file(&prefix_path)?);
+///
 /// let whole_line = fingerprint_line_prefix(&path, 2, 100)?;
-/// assert_eq!(whole_line.as_bytes(), blake3::hash("café\n".as_bytes()).as_bytes());
+/// let line_path = directory.join("line.txt");
+/// fs::write(&line_path, "café\n")?;
+/// assert_eq!(whole_line, fingerprint_file(&line_path)?);
 ///
 /// // A file prefix also includes every preceding line.
 /// let file_prefix = fingerprint_through_line(&path, 2)?;
-/// assert_eq!(file_prefix.as_bytes(), blake3::hash("header\ncafé\n".as_bytes()).as_bytes());
+/// let file_prefix_path = directory.join("file-prefix.txt");
+/// fs::write(&file_prefix_path, "header\ncafé\n")?;
+/// assert_eq!(file_prefix, fingerprint_file(&file_prefix_path)?);
 ///
 /// // Zero bytes and an absent line both hash the empty sequence.
 /// assert_eq!(fingerprint_line_prefix(&path, 2, 0)?, fingerprint_line_prefix(&path, 4, 100)?);

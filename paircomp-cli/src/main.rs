@@ -3,7 +3,8 @@ mod presentation;
 use clap::{ColorChoice, Parser};
 use paircomp_core::{
     fingerprint_line_prefix, fingerprint_through_line, inspect_file, inspect_line,
-    utf8_character_position, ByteSearch, ByteSearchStep, Fingerprint, LineSearch, LineSearchStep,
+    utf8_character_position, ByteSearch, ByteSearchStep, Comparison, Fingerprint, LineSearch,
+    LineSearchStep,
 };
 use std::fmt;
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -125,7 +126,8 @@ fn run(
         diagnostics,
         presentation,
         "Does this fingerprint match the other copy? [y/n] ",
-    )? {
+    )? == Comparison::Match
+    {
         writeln!(output, "{}", palette.matched("Files match."))?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -154,14 +156,14 @@ fn run(
                     "Fingerprint: {}",
                     palette.bold(format_fingerprint(fingerprint, full_digest))
                 )?;
-                let matched = read_match(
+                let comparison = read_match(
                     input,
                     output,
                     diagnostics,
                     presentation,
                     "Does this fingerprint match? [y/n] ",
                 )?;
-                search.record_result(matched)?;
+                search.record_result(comparison)?;
             }
             LineSearchStep::DifferenceAtLine { line } => {
                 writeln!(output)?;
@@ -252,14 +254,14 @@ fn localize_byte(
                     "Fingerprint: {}",
                     palette.bold(format_fingerprint(fingerprint, full_digest))
                 )?;
-                let matched = read_match(
+                let comparison = read_match(
                     input,
                     output,
                     diagnostics,
                     presentation,
                     "Does this fingerprint match? [y/n] ",
                 )?;
-                search.record_result(matched)?;
+                search.record_result(comparison)?;
             }
             ByteSearchStep::DifferenceAtByte { byte } => {
                 let character = utf8_character_position(path, line, byte)?;
@@ -325,8 +327,13 @@ fn read_match(
     diagnostics: &mut impl Write,
     presentation: Presentation,
     prompt: &str,
-) -> Result<bool, WorkflowError> {
-    read_yes_no(input, output, diagnostics, presentation, prompt, None)
+) -> Result<Comparison, WorkflowError> {
+    let matched = read_yes_no(input, output, diagnostics, presentation, prompt, None)?;
+    Ok(if matched {
+        Comparison::Match
+    } else {
+        Comparison::Differ
+    })
 }
 
 /// Reads a trimmed, case-insensitive yes/no answer with an optional default.
