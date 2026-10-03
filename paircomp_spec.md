@@ -225,14 +225,16 @@ Both instances must use the following protocol. Correct localization assumes unc
 
 1. Compute and display the whole-file fingerprint and local line count. Ask the user whether the whole-file fingerprints match. If they do, report a match and stop.
 2. On a mismatch, always ask for the line count displayed by the other instance, even when the counts are equal. Accept a nonnegative integer representable as `u64`. Each instance uses its own count as `local_line_count` and the entered count as `other_line_count`.
-3. Initialize inclusive candidate bounds `low = 1` and `high = max(local_line_count, other_line_count)`. If `high == 0`, report an inconsistent answer and abort: both files are empty and cannot differ.
+3. Initialize inclusive candidate bounds `low = 1`. If the line counts are equal, set `high` to that count; otherwise set `high = min(local_line_count, other_line_count) + 1`. If `high == 0`, report an inconsistent answer and abort: both files are empty and cannot differ. Add one only for unequal counts, whose minimum is below `u64::MAX`.
 4. While `low < high`, choose `mid = low + (high - low) / 2` using integer division, and request comparison through line `mid`.
 5. Fingerprint bytes from the beginning of the local file through that line, including its terminator if present. If the local file ends before that line, hash the whole local file; do not fail, pad the input, or add an EOF marker to the hash.
 6. If the user reports a match, set `low = mid + 1`; otherwise set `high = mid`. Repeat from step 4.
-7. When `low == high`, return `DifferenceAtLine { line: low }` without requesting another comparison. The initial whole-file mismatch establishes the upper bound, including when it is line 1.
+7. When `low == high`, return `DifferenceAtLine { line: low }` without requesting another comparison. The initial whole-file mismatch and the line counts establish the upper bound, including when it is line 1.
 8. Report the line number. If it exceeds the local line count, also report that the local file ends before this line. Offer the optional within-line search in section 6.3. After the user repairs the file manually, Paircomp is simply rerun. Do not attempt synchronization or patching.
 
-Using the maximum of the two counts makes the initial bounds identical on both systems regardless of which file is local. Beyond-EOF prefix behavior ensures that comparison at the initial upper bound would hash the entire file on each system. Matching prefixes exclude all lines through the midpoint; mismatching prefixes retain the midpoint as a candidate.
+These bounds are identical on both systems regardless of which file is local. With equal counts, the upper-bound prefix is the whole file and is already known to differ. With unequal counts, the first difference must be within the shorter file or at the first line absent from it; the prefix through that absent line necessarily differs because the longer file includes another line. No requested comparison exceeds the shorter file's line count. Matching prefixes exclude all lines through the midpoint; mismatching prefixes retain the midpoint as a candidate.
+
+For 220 lines versus 2 lines, start with candidates 1 through 3 and compare through line 2. If those prefixes match, report line 3 without another comparison. If they differ, compare through line 1 to distinguish a difference on line 1 from one on line 2. An empty file versus a nonempty file immediately yields line 1 without any line-prefix comparisons.
 
 ### 6.1 Newlines and edge cases
 
@@ -266,12 +268,12 @@ Both files must remain unchanged from initial inspection until the comparison se
 
 1. After reporting the differing line, ask `Continue within this line? [Y/n]`. Both instances must choose the same answer. Declining completes the comparison with status 1.
 2. When continuing, display the selected line's byte count, including any CR/LF. A missing line has count zero. Always ask for the other instance's count, even when it is equal or either line is absent. Accept a nonnegative decimal `u64`.
-3. Set `low = 1` and `high = max(local_byte_len, other_byte_len)`. Reject `high == 0` as an inconsistent mismatch. The line search establishes equal preceding lines and a differing selected line, supplying the differing upper bound without an additional fingerprint comparison.
+3. Set `low = 1`. If the byte lengths are equal, set `high` to that length; otherwise set `high = min(local_byte_len, other_byte_len) + 1`. Reject `high == 0` as an inconsistent mismatch. Add one only for unequal lengths, whose minimum is below `u64::MAX`. The line search establishes equal preceding lines and a differing selected line. Equal lengths therefore supply a differing upper-bound prefix; unequal lengths guarantee a difference no later than the first byte absent from the shorter line. No additional fingerprint comparison is needed to establish this bound.
 4. While `low < high`, request the line-local prefix through byte `mid = low + (high - low) / 2`. Hash from this line's beginning through the requested byte, clamping to the local line's end. An absent line hashes no bytes.
 5. On a match, set `low = mid + 1`; otherwise set `high = mid`. When the bounds meet, return `DifferenceAtByte { byte: low }` without another comparison.
 6. Report the line and 1-based byte position. If the local byte is absent, explain whether the local file ends before the line or the local line ends before the byte. Add the UTF-8 character position when available, as defined in section 4.2. Complete with status 1.
 
-Both instances therefore request the same byte positions and locate the same first differing byte, including unequal line lengths, insertion/deletion of bytes, and an absent line. Fingerprints in this stage include only the selected line's prefix, rather than the preceding lines. Correctness retains the assumptions of accurate counts, consistent answers, stable files, and no fingerprint collision.
+Both instances therefore request the same byte positions and locate the same first differing byte, including unequal line lengths, insertion/deletion of bytes, and an absent line. No requested comparison exceeds the shorter line's byte length. An absent line versus an existing line immediately yields byte 1 without any byte-prefix comparisons. Fingerprints in this stage include only the selected line's prefix, rather than the preceding lines. Correctness retains the assumptions of accurate counts, consistent answers, stable files, and no fingerprint collision.
 
 For UTF-8 `café` versus `cafè`, byte counts are both 5; comparisons through bytes 3 and 4 match, yielding byte 5 and character 4. For `b"a"` versus `b"a\n"`, the result is byte 2 and character 2 on both copies; the shorter copy explains that its byte is absent. For `b"a\r\n"` versus `b"a\n"`, the result is byte 2, comparing CR with LF. An absent line versus any existing line yields byte 1; only the existing line can have a character annotation.
 
@@ -404,6 +406,7 @@ Required cases:
 - Difference on the first line is found.
 - Difference on the last line is found.
 - Files with differing line counts due to an added/absent line are localized to the first divergence.
+- Widely differing line counts (such as 220 versus 2) never request comparisons beyond the shorter file. Matching all shared lines yields the first absent line without another comparison; an empty file versus a nonempty file needs no line-prefix comparisons.
 - Different final-newline state is detected.
 - Empty and one-line files behave correctly.
 - CRLF versus LF is detected as a difference.
@@ -423,6 +426,7 @@ Within-line tests must also cover:
 
 - Exact byte prefixes, including byte zero, beyond-line requests, absent lines, LF and CRLF, and rejection of line zero for line-local operations.
 - Paired line and byte searches with swapped counts and actual fingerprints: first/last-byte changes, inserted/absent bytes, unequal lengths, added lines, empty files, missing final newlines, CRLF versus LF, and invalid UTF-8.
+- Widely differing byte lengths never request comparisons beyond the shorter line. Matching all shared bytes yields the first absent byte without another comparison; an absent line versus an existing line needs no byte-prefix comparisons.
 - UTF-8 code-point mapping inside multibyte characters, emoji, combining marks, CR/LF, and immediately after a valid line. Validate the whole local line and omit annotations for absent or invalid UTF-8 lines. Reject zero or out-of-range byte coordinates.
 - Long lines and UTF-8 sequences across read-buffer boundaries; short and interrupted reads; propagated I/O errors; search-state stability, zero-length mismatch rejection, completion errors, and maximum `u64` bounds.
 - Focused CLI tests for default continuation, declining, byte-count exchange, explicit match answers without defaults, character annotations, local absence explanations, and invalid/aborted input at every new prompt. Include paired CLI sessions and verify that whole-file matches bypass both searches.

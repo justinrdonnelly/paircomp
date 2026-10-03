@@ -24,6 +24,13 @@ create an extra line. A prefix request beyond the local end of file fingerprints
 all available bytes. The caller compares fingerprints from the two systems and
 feeds each match result to the search state.
 
+Both searches use the shared count as the upper bound when counts are equal,
+or one past the shorter count when they differ. Requested comparisons stay
+within both copies' counts; a matching shared prefix can locate the first
+absent line or byte without another comparison. An empty file versus a nonempty
+file immediately yields line 1; an absent line versus an existing line yields
+byte 1.
+
 After locating a differing line, use `inspect_line` to obtain its byte length
 (including LF), or `None` if it is absent. Exchange lengths, treating absence as
 zero, and construct `ByteSearch`. Feed comparisons from `fingerprint_line_prefix`

@@ -40,8 +40,10 @@ impl LineSearch {
     /// copy; either count may be zero. Both files must stay unchanged, and both
     /// instances must use accurate counts and the same comparison answers.
     ///
-    /// The larger count determines the shared upper bound. The constructor does
-    /// not read either file or verify the reported mismatch.
+    /// Equal counts bound the search at that count. Unequal counts bound it at
+    /// one past the shorter file: the first difference is either in a shared
+    /// line or at the first absent line. Comparisons never exceed the shorter
+    /// count. The constructor does not read either file or verify the mismatch.
     ///
     /// # Errors
     ///
@@ -62,7 +64,7 @@ impl LineSearch {
     /// # Ok::<(), paircomp_core::Error>(())
     /// ```
     pub fn new(local_line_count: u64, other_line_count: u64) -> Result<Self, Error> {
-        let bounds = SearchBounds::new(local_line_count.max(other_line_count))
+        let bounds = SearchBounds::new(local_line_count, other_line_count)
             .ok_or(Error::EmptyFilesCannotDiffer)?;
         Ok(Self { bounds })
     }
@@ -141,8 +143,10 @@ impl ByteSearch {
     /// must stay unchanged, and both instances must use accurate lengths and the
     /// same comparison answers.
     ///
-    /// The larger count determines the shared upper bound. The constructor does
-    /// not read either file or verify the reported mismatch.
+    /// Equal lengths bound the search at that length. Unequal lengths bound it
+    /// at one past the shorter line: the first difference is either in a shared
+    /// byte or at the first absent byte. Comparisons never exceed the shorter
+    /// length. The constructor does not read either file or verify the mismatch.
     ///
     /// # Errors
     ///
@@ -163,7 +167,7 @@ impl ByteSearch {
     /// # Ok::<(), paircomp_core::Error>(())
     /// ```
     pub fn new(local_byte_len: u64, other_byte_len: u64) -> Result<Self, Error> {
-        let bounds = SearchBounds::new(local_byte_len.max(other_byte_len))
+        let bounds = SearchBounds::new(local_byte_len, other_byte_len)
             .ok_or(Error::EmptyLinesCannotDiffer)?;
         Ok(Self { bounds })
     }
@@ -211,7 +215,13 @@ struct SearchBounds {
 }
 
 impl SearchBounds {
-    fn new(high: u64) -> Option<Self> {
+    fn new(local_count: u64, other_count: u64) -> Option<Self> {
+        let high = if local_count == other_count {
+            local_count
+        } else {
+            // Unequal counts guarantee the smaller one is below u64::MAX.
+            local_count.min(other_count) + 1
+        };
         (high > 0).then_some(Self { low: 1, high })
     }
 

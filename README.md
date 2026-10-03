@@ -104,6 +104,13 @@ text, the comparison protocol, or exit statuses.
    zero bytes. Compare the requested line-prefix fingerprints and give the
    same answers until both report the first differing byte.
 
+Prefix comparisons stay within the shorter file's line count or the shorter
+line's byte count. If all shared content matches, the first difference is the
+next line or byte, which is absent from the shorter copy. For 220 lines versus
+2 lines, Paircomp first compares through line 2; matching prefixes immediately
+locate the difference at line 3. An empty file or an absent selected line needs
+no prefix comparisons at that search stage.
+
 Answers accept `y`/`yes` and `n`/`no`, regardless of case or surrounding
 whitespace. Fingerprint `[y/n]` prompts require an explicit answer; blank or
 whitespace-only answers are invalid. An empty answer at the continuation

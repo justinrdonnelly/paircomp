@@ -223,21 +223,34 @@ fn search_state_follows_midpoint_bounds_and_rejects_invalid_operations() {
 
 #[test]
 fn search_midpoint_does_not_overflow_at_maximum_line_count() {
-    let mut search = LineSearch::new(0, u64::MAX).unwrap();
-    assert_eq!(
-        search.current_step(),
-        LineSearchStep::CompareThroughLine { line: 1 << 63 }
-    );
-    for _ in 0..63 {
-        search.record_result(true).unwrap();
+    for counts in [
+        (u64::MAX, u64::MAX),
+        (u64::MAX - 1, u64::MAX),
+        (u64::MAX, u64::MAX - 1),
+    ] {
+        let mut search = LineSearch::new(counts.0, counts.1).unwrap();
+        assert_eq!(
+            search.current_step(),
+            LineSearchStep::CompareThroughLine { line: 1 << 63 }
+        );
+        for _ in 0..63 {
+            search.record_result(true).unwrap();
+        }
+        assert_eq!(
+            search.current_step(),
+            LineSearchStep::DifferenceAtLine { line: u64::MAX }
+        );
     }
-    assert_eq!(
-        search.current_step(),
-        LineSearchStep::DifferenceAtLine { line: u64::MAX }
-    );
+    for counts in [(0, u64::MAX), (u64::MAX, 0)] {
+        let search = LineSearch::new(counts.0, counts.1).unwrap();
+        assert_eq!(
+            search.current_step(),
+            LineSearchStep::DifferenceAtLine { line: 1 }
+        );
+    }
 }
 
-fn paired_search(first_bytes: &[u8], second_bytes: &[u8]) -> Option<u64> {
+fn paired_search(first_bytes: &[u8], second_bytes: &[u8]) -> Option<(u64, Vec<u64>)> {
     let first = Fixture::new(first_bytes);
     let second = Fixture::new(second_bytes);
     let first_info = inspect_file(first.path()).unwrap();
@@ -248,18 +261,21 @@ fn paired_search(first_bytes: &[u8], second_bytes: &[u8]) -> Option<u64> {
 
     let mut first_search = LineSearch::new(first_info.line_count, second_info.line_count).unwrap();
     let mut second_search = LineSearch::new(second_info.line_count, first_info.line_count).unwrap();
+    let mut comparisons = Vec::new();
     for _ in 0..64 {
         let first_step = first_search.current_step();
         assert_eq!(first_step, first_search.current_step());
         assert_eq!(first_step, second_search.current_step());
         match first_step {
             LineSearchStep::CompareThroughLine { line } => {
+                assert!(line <= first_info.line_count.min(second_info.line_count));
+                comparisons.push(line);
                 let matched = fingerprint_through_line(first.path(), line).unwrap()
                     == fingerprint_through_line(second.path(), line).unwrap();
                 first_search.record_result(matched).unwrap();
                 second_search.record_result(matched).unwrap();
             }
-            LineSearchStep::DifferenceAtLine { line } => return Some(line),
+            LineSearchStep::DifferenceAtLine { line } => return Some((line, comparisons)),
         }
     }
     panic!("paired searches did not terminate");
@@ -282,10 +298,30 @@ fn paired_instances_request_the_same_prefix_and_find_the_first_difference() {
         (&b"old"[..], &b"new"[..], 1),
     ] {
         assert_eq!(
-            paired_search(first, second),
+            paired_search(first, second).map(|(line, _)| line),
             Some(expected_line),
             "first: {first:?}, second: {second:?}"
         );
+    }
+}
+
+#[test]
+fn unequal_line_counts_only_compare_lines_present_in_both_files() {
+    let long = b"a\n".repeat(220);
+    for (short, expected_line, comparisons) in [
+        (&b""[..], 1, vec![]),
+        (&b"a\n"[..], 2, vec![1]),
+        (&b"a\na\n"[..], 3, vec![2]),
+        (&b"X\na\n"[..], 1, vec![2, 1]),
+        (&b"a\nX\n"[..], 2, vec![2, 1]),
+        (&b"a\na"[..], 2, vec![2, 1]),
+    ] {
+        for (first, second) in [(short, long.as_slice()), (long.as_slice(), short)] {
+            assert_eq!(
+                paired_search(first, second),
+                Some((expected_line, comparisons.clone()))
+            );
+        }
     }
 }
 
@@ -365,7 +401,7 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
         ByteSearch::new(0, 0),
         Err(Error::EmptyLinesCannotDiffer)
     ));
-    let mut search = ByteSearch::new(4, 7).unwrap();
+    let mut search = ByteSearch::new(7, 7).unwrap();
     assert_eq!(
         search.current_step(),
         ByteSearchStep::CompareThroughByte { byte: 4 }
@@ -404,29 +440,47 @@ fn byte_search_state_is_stable_checked_and_overflow_safe() {
         single.record_result(false),
         Err(Error::SearchAlreadyComplete)
     ));
-    for matched in [false, true] {
-        let mut search = ByteSearch::new(0, u64::MAX).unwrap();
+    for counts in [(0, u64::MAX), (u64::MAX, 0)] {
+        let search = ByteSearch::new(counts.0, counts.1).unwrap();
         assert_eq!(
             search.current_step(),
-            ByteSearchStep::CompareThroughByte { byte: 1 << 63 }
+            ByteSearchStep::DifferenceAtByte { byte: 1 }
         );
-        while matches!(
-            search.current_step(),
-            ByteSearchStep::CompareThroughByte { .. }
-        ) {
-            search.record_result(matched).unwrap();
-        }
-        assert_eq!(
-            search.current_step(),
-            ByteSearchStep::DifferenceAtByte {
-                byte: if matched { u64::MAX } else { 1 }
+    }
+    for counts in [
+        (u64::MAX, u64::MAX),
+        (u64::MAX - 1, u64::MAX),
+        (u64::MAX, u64::MAX - 1),
+    ] {
+        for matched in [false, true] {
+            let mut search = ByteSearch::new(counts.0, counts.1).unwrap();
+            assert_eq!(
+                search.current_step(),
+                ByteSearchStep::CompareThroughByte { byte: 1 << 63 }
+            );
+            while matches!(
+                search.current_step(),
+                ByteSearchStep::CompareThroughByte { .. }
+            ) {
+                search.record_result(matched).unwrap();
             }
-        );
+            assert_eq!(
+                search.current_step(),
+                ByteSearchStep::DifferenceAtByte {
+                    byte: if matched { u64::MAX } else { 1 }
+                }
+            );
+        }
     }
 }
 
-fn paired_byte_search(first: &[u8], second: &[u8], expected_line: u64, expected_byte: u64) {
-    let line = paired_search(first, second).unwrap();
+fn paired_byte_search(
+    first: &[u8],
+    second: &[u8],
+    expected_line: u64,
+    expected_byte: u64,
+) -> Vec<u64> {
+    let (line, _) = paired_search(first, second).unwrap();
     assert_eq!(line, expected_line);
     let first = Fixture::new(first);
     let second = Fixture::new(second);
@@ -438,12 +492,15 @@ fn paired_byte_search(first: &[u8], second: &[u8], expected_line: u64, expected_
         .map_or(0, |info| info.byte_len);
     let mut a = ByteSearch::new(first_len, second_len).unwrap();
     let mut b = ByteSearch::new(second_len, first_len).unwrap();
+    let mut comparisons = Vec::new();
     for _ in 0..64 {
         let step = a.current_step();
         assert_eq!(step, a.current_step());
         assert_eq!(step, b.current_step());
         match step {
             ByteSearchStep::CompareThroughByte { byte } => {
+                assert!(byte <= first_len.min(second_len));
+                comparisons.push(byte);
                 let matched = fingerprint_line_prefix(first.path(), line, byte).unwrap()
                     == fingerprint_line_prefix(second.path(), line, byte).unwrap();
                 a.record_result(matched).unwrap();
@@ -451,11 +508,31 @@ fn paired_byte_search(first: &[u8], second: &[u8], expected_line: u64, expected_
             }
             ByteSearchStep::DifferenceAtByte { byte } => {
                 assert_eq!(byte, expected_byte);
-                return;
+                return comparisons;
             }
         }
     }
     panic!("paired byte searches did not terminate");
+}
+
+#[test]
+fn unequal_byte_lengths_only_compare_bytes_present_in_both_lines() {
+    let long = vec![b'a'; 220];
+    for (short, expected_byte, comparisons) in [
+        (&b""[..], 1, vec![]),
+        (&b"a"[..], 2, vec![1]),
+        (&b"aa"[..], 3, vec![2]),
+        (&b"Xa"[..], 1, vec![2, 1]),
+        (&b"aX"[..], 2, vec![2, 1]),
+        (&b"a\n"[..], 2, vec![2, 1]),
+    ] {
+        for (first, second) in [(short, long.as_slice()), (long.as_slice(), short)] {
+            assert_eq!(
+                paired_byte_search(first, second, 1, expected_byte),
+                comparisons
+            );
+        }
+    }
 }
 
 #[test]

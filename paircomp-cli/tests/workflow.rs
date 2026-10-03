@@ -228,6 +228,32 @@ fn beyond_eof_is_reported() {
 }
 
 #[test]
+fn very_different_line_counts_compare_only_the_shared_prefix() {
+    let long = Fixture::new(&b"a\n".repeat(220));
+    let short = Fixture::new(b"a\na\n");
+    let long_output = invoke(long.path(), "n\n2\ny\nn\n");
+    let short_output = invoke(short.path(), "n\n220\ny\nn\n");
+    for output in [&long_output, &short_output] {
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let text = stdout(output);
+        let comparisons = text
+            .lines()
+            .filter(|line| line.starts_with("Compare through line "))
+            .collect::<Vec<_>>();
+        assert_eq!(comparisons, ["Compare through line 2:"]);
+        assert!(text.contains("First divergence: line 3"));
+    }
+    assert!(stdout(&short_output).contains("The local file ends before line 3."));
+    let long_hashes = fingerprints(&long_output);
+    let short_hashes = fingerprints(&short_output);
+    assert_eq!(long_hashes.len(), 2);
+    assert_eq!(short_hashes.len(), 2);
+    assert_ne!(long_hashes[0], short_hashes[0]);
+    assert_eq!(long_hashes[1], short_hashes[1]);
+}
+
+#[test]
 fn empty_file_can_localize_a_nonempty_other_file() {
     let fixture = Fixture::new(b"");
     let output = invoke(fixture.path(), "no\n1\nn\n");
@@ -505,12 +531,12 @@ fn paired_cli_handles_a_missing_final_newline_and_an_absent_line() {
 
     let short = Fixture::new(b"a\n");
     let long = Fixture::new(b"a\nb\n");
-    let short_output = invoke(short.path(), "n\n2\ny\ny\n2\nn\n");
-    let long_output = invoke(long.path(), "n\n1\ny\ny\n0\nn\n");
+    let short_output = invoke(short.path(), "n\n2\ny\ny\n2\n");
+    let long_output = invoke(long.path(), "n\n1\ny\ny\n0\n");
     for output in [&short_output, &long_output] {
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stderr.is_empty());
-        assert!(stdout(output).contains("Compare line 2 through byte 1:"));
+        assert!(!stdout(output).contains("Compare line 2 through byte"));
         assert!(stdout(output).contains("First divergence: line 2, byte 1"));
     }
     assert!(stdout(&short_output).contains("Line 2 size: 0 bytes"));
