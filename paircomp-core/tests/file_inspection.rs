@@ -3,7 +3,9 @@ use paircomp_core::{
     inspect_line, utf8_character_position, ByteSearch, ByteSearchStep, Error, Fingerprint,
     LineSearch, LineSearchStep,
 };
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -59,6 +61,44 @@ fn full_file_fingerprints_match_exact_bytes() {
     assert_ne!(fingerprint, fingerprint_file(changed.path()).unwrap());
     assert_eq!(fingerprint, inspect_file(first.path()).unwrap().fingerprint);
     assert_hash(fingerprint, b"first\nsecond\n");
+}
+
+#[test]
+fn fingerprints_work_as_hash_collection_keys() {
+    let first = Fixture::new(b"first\nsecond\n");
+    let identical = Fixture::new(b"first\nsecond\n");
+    let changed = Fixture::new(b"first\nseconD\n");
+
+    let fingerprint = fingerprint_file(first.path()).unwrap();
+    let equal = fingerprint_file(identical.path()).unwrap();
+    let different = fingerprint_file(changed.path()).unwrap();
+
+    let mut set = HashSet::from([fingerprint]);
+    assert!(!set.insert(equal));
+    assert!(set.insert(different));
+    assert_eq!(set.len(), 2);
+
+    let map = HashMap::from([(fingerprint, "original"), (different, "changed")]);
+    assert_eq!(map.get(&equal), Some(&"original"));
+    assert_eq!(map.get(&different), Some(&"changed"));
+}
+
+#[test]
+fn fingerprint_can_be_read_through_a_generic_byte_slice_api() {
+    let fixture = Fixture::new(b"\xff\r\n\x80\n\xfe");
+    let fingerprint = fingerprint_file(fixture.path()).unwrap();
+
+    let bytes: &[u8] = fingerprint.as_ref();
+    assert!(std::ptr::eq(
+        bytes.as_ptr(),
+        fingerprint.as_bytes().as_ptr()
+    ));
+
+    let mut read_bytes = Vec::new();
+    Cursor::new(fingerprint)
+        .read_to_end(&mut read_bytes)
+        .unwrap();
+    assert_eq!(read_bytes.as_slice(), fingerprint.as_bytes());
 }
 
 #[test]

@@ -209,7 +209,9 @@ Feed raw file bytes into the hash. Do not normalize:
 
 Paircomp is establishing exact file equality.
 
-Internally retain the full 256-bit digest; core fingerprint equality compares all 32 bytes. By default, the CLI displays the first 8 lowercase hexadecimal digits (the first 4 digest bytes, or 32 bits). With `--full-digest`, display all 64 lowercase hexadecimal digits (256 bits). Apply the selected display mode to every whole-file, through-line, and within-line prefix comparison in the session. Both instances must use the same display mode; tell users this alongside the file-stability notice.
+Internally retain the full 256-bit digest; core fingerprint equality compares all 32 bytes. `Fingerprint` implements `Hash` over all 32 bytes for use in standard hash collections. Its `as_bytes()` accessor returns `&[u8; 32]`, and `AsRef<[u8]>` borrows the same complete digest as a byte slice without copying. These traits do not change BLAKE3 fingerprint generation.
+
+By default, the CLI displays the first 8 lowercase hexadecimal digits (the first 4 digest bytes, or 32 bits). With `--full-digest`, display all 64 lowercase hexadecimal digits (256 bits). Apply the selected display mode to every whole-file, through-line, and within-line prefix comparison in the session. Both instances must use the same display mode; tell users this alongside the file-stability notice.
 
 Under the usual ideal-hash model, two distinct byte sequences accidentally match in the displayed fingerprint with probability `1 / 2^32` per comparison by default (about 1 in 4.29 billion), or `1 / 2^256` with `--full-digest`. Across at most `q` comparisons in a session, a union bound gives a probability of any accidental false match of at most `q / 2^32` by default, or `q / 2^256` in full-digest mode, capped at 1. For up to 40 comparisons, the default bound is about 1 in 107 million sessions. Count the whole-file comparison and both prefix-search stages; comparisons of identical byte sequences cannot produce a false match.
 

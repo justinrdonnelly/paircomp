@@ -155,10 +155,11 @@ pub struct LineInfo {
 
 /// A full 256-bit BLAKE3 digest of raw bytes.
 ///
-/// Equality compares all 32 digest bytes. Matching fingerprints provide strong
-/// evidence of equal input, subject to the possibility of a hash collision.
-/// Use [`Self::as_bytes`] to format the digest for display in a frontend.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Equality and [`std::hash::Hash`] use all 32 digest bytes. Matching fingerprints
+/// provide strong evidence of equal input, subject to the possibility of a hash
+/// collision. Use [`Self::as_bytes`] to format the digest for display in a frontend,
+/// or [`AsRef<[u8]>`] to borrow the complete digest as a byte slice.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {
@@ -167,6 +168,13 @@ impl Fingerprint {
     /// No bytes are truncated or converted to a display string.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+impl AsRef<[u8]> for Fingerprint {
+    /// Borrows all 32 digest bytes in their original byte order, without copying.
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 
