@@ -284,6 +284,7 @@ Use `clap` with its derive API. The current CLI surface is:
 ```console
 paircomp FILE
 paircomp --full-digest FILE
+paircomp --color auto|always|never FILE
 paircomp --help
 paircomp --version
 ```
@@ -294,6 +295,7 @@ The CLI should:
 - call `paircomp-core`,
 - format returned metadata/fingerprints,
 - select the first 8 hexadecimal digits by default or all 64 with `--full-digest`, consistently throughout the session,
+- apply the selected color mode to comparison output and workflow diagnostics,
 - prompt for match/no-match answers,
 - obtain the other instance's line count after a whole-file mismatch,
 - offer within-line continuation, then display and obtain the selected line's byte counts,
@@ -309,10 +311,20 @@ Use `PathBuf`/`OsString`-compatible argument handling so Unix paths are not unne
 - Match prompts accept `y`/`yes` and `n`/`no`, case-insensitively, after trimming surrounding whitespace.
 - Whole-file, line-prefix, and byte-prefix match prompts display `[y/n]` and have no default. A submitted blank or whitespace-only answer is invalid and repeats the prompt.
 - The continuation prompt `[Y/n]` accepts the same answers but defaults to `yes` on a submitted blank or whitespace-only answer. Tell users to choose the same continuation answer on both copies.
-- The other-line-count and other-byte-count prompts have no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
+- The other-line-count prompt is `Enter the other copy's line count:` and the other-byte-count prompt is `Enter the other copy's byte count for this line:`. Both have no default. Require decimal digits representing a `u64`, after trimming surrounding whitespace; zero is valid.
 - Invalid answers or malformed counts produce a diagnostic on stderr and repeat the same prompt until a valid answer is submitted. This applies to all match, continuation, and count prompts, including blank counts, signed or nondecimal counts, and `u64` overflow. Invalid input must not advance either search, recompute fingerprints, or restart the session.
 - Stdin EOF is an aborted interaction and terminates with status 2. It must never be interpreted as a blank answer or a sequence of `no` answers.
 - A partial answer followed by EOF without a newline also aborts; only a newline submits a prompt answer.
+
+### 7.2 Terminal presentation
+
+- `--color` controls comparison output and workflow diagnostics. It accepts `auto`, `always`, or `never`, defaulting to `auto`. Both `--color MODE` and `--color=MODE` are accepted.
+- For comparison output in automatic mode, enable color and emphasis only when the destination stream is a terminal, `TERM` is not `dumb`, and `NO_COLOR` is unset or empty. Evaluate stdout and stderr independently, without requiring terminal stdin. Redirected output remains plain by default, even when `CLICOLOR_FORCE` is set.
+- `always` forces color and emphasis, including for redirected output; `never` disables both. These explicit modes override `NO_COLOR` and `TERM=dumb` for comparison output and workflow diagnostics.
+- Clap handles help/version output and invocation errors using its default color policy, independently of `--color`. Arguments after `--` remain literal file paths.
+- Style input prompts cyan, comparison headings bold cyan, counts and fingerprints bold in the default foreground, confirmed matches green, divergence results (including any character annotation) bold yellow, and workflow diagnostic labels red. Use the terminal's palette, preserving its background and default foreground for other text. Keep file-stability and continuation notices readable in the default foreground.
+- Reset styling before reading an answer, before printing unstyled text, and at the end of each styled result or diagnostic label. Styling must not change fingerprint characters, input rules, search progression, or exit statuses. All information remains available through wording without color, and the two copies may choose different color modes.
+- Keep presentation entirely in the CLI, reusing clap's existing styling support rather than adding a dependency for basic ANSI styles.
 
 ## 8. Example interaction
 
@@ -328,7 +340,7 @@ Use the same fingerprint display mode on both copies.
 Keep both files unchanged during this session. Restart after editing either file.
 
 Does this fingerprint match the other copy? [y/n] n
-Line count displayed by the other copy: 1247
+Enter the other copy's line count: 1247
 
 Compare through line 624:
 Fingerprint: <fingerprint>
@@ -345,7 +357,7 @@ Choose the same continuation answer on both copies.
 Continue within this line? [Y/n] y
 
 Line 737 size: 124 bytes (including any CR/LF)
-Byte count displayed for this line by the other copy: 124
+Enter the other copy's byte count for this line: 124
 
 Compare line 737 through byte 62:
 Fingerprint: <fingerprint>
@@ -377,7 +389,7 @@ Dependencies may use compatible permissive licenses. Before adding any dependenc
 | Dependency | Crate | Purpose |
 |---|---|---|
 | `blake3` | `paircomp-core` | BLAKE3 fingerprinting |
-| `clap` with `derive` | `paircomp` | CLI parsing/help/version |
+| `clap` with `derive` | `paircomp` | CLI parsing/help/version and terminal styling |
 
 ## 11. Testing requirements
 
@@ -404,6 +416,8 @@ Use multiple fixtures for the added/absent-line case when useful—for example, 
 Include paired-state tests that simulate both isolated instances using two fixtures. Construct one search with counts `(a, b)` and the other with `(b, a)`. At each step, assert that both request the same line, compute each fixture's actual prefix fingerprint, and feed the same equality result into both states. Assert that both terminate at the expected first divergent line. Cover equal and unequal line counts, an appended line, empty versus nonempty input, and differing final-newline state. For identical files, verify that the whole-file comparison completes without creating a line search.
 
 CLI tests should focus on argument parsing and a small number of end-to-end interactions, including acquisition of the other count, the beyond-EOF message, and exit statuses 0/1/2. Verify that default fingerprints are exactly the first 8 lowercase hexadecimal digits of the core digest and that `--full-digest` displays all 64 digits, including whole-file, through-line, and within-line comparisons. Cover the option in help and argument handling, paired sessions in both display modes, and whole-file matches bypassing both searches in either mode. Verify recovery from repeated invalid answers at every prompt, including blank or whitespace-only match answers and malformed counts. Retries must preserve fingerprints, requested positions, and final results; corrected input completes with status 0 or 1. Verify that stdin EOF and partial answers without a newline still abort with status 2, including after invalid input. Do not duplicate core algorithm tests through the CLI.
+
+For terminal presentation, verify automatic-mode decisions for terminal and nonterminal destinations, nonempty `NO_COLOR`, and `TERM=dumb`, along with explicit overrides. Cover plain redirected output, forced color, option validation, clap's default help and invocation-error handling independently of `--color`, and the `--` delimiter. Exercise colored matching, paired line/byte searches in both digest modes, prompt retries, and fatal workflow diagnostics. Removing styling must leave exactly the plain interaction, fingerprints, and statuses; prompts must reset styling before input.
 
 Within-line tests must also cover:
 

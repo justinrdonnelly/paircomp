@@ -1,12 +1,16 @@
-use clap::Parser;
+mod presentation;
+
+use clap::{ColorChoice, Parser};
 use paircomp_core::{
     fingerprint_line_prefix, fingerprint_through_line, inspect_file, inspect_line,
     utf8_character_position, ByteSearch, ByteSearchStep, Fingerprint, LineSearch, LineSearchStep,
 };
 use std::fmt;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use presentation::{color_for_stream, Palette, Presentation};
 
 #[derive(Parser)]
 #[command(
@@ -21,6 +25,10 @@ struct Cli {
     /// Display all 64 hexadecimal digits instead of the first 8
     #[arg(long)]
     full_digest: bool,
+
+    /// Control color and emphasis in comparison output
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
 }
 
 #[derive(Debug)]
@@ -54,17 +62,26 @@ impl From<io::Error> for WorkflowError {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let presentation = Presentation {
+        output: Palette::new(color_for_stream(cli.color, io::stdout().is_terminal())),
+        diagnostics: Palette::new(color_for_stream(cli.color, io::stderr().is_terminal())),
+    };
     let mut diagnostics = io::stderr().lock();
     match run(
         &cli.file,
         cli.full_digest,
+        presentation,
         &mut io::stdin().lock(),
         &mut io::stdout().lock(),
         &mut diagnostics,
     ) {
         Ok(status) => status,
         Err(error) => {
-            let _ = writeln!(diagnostics, "paircomp: {error}");
+            let _ = writeln!(
+                diagnostics,
+                "{} {error}",
+                presentation.diagnostics.error("paircomp:")
+            );
             ExitCode::from(2)
         }
     }
@@ -76,18 +93,20 @@ fn main() -> ExitCode {
 fn run(
     path: &Path,
     full_digest: bool,
+    presentation: Presentation,
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
 ) -> Result<ExitCode, WorkflowError> {
+    let palette = presentation.output;
     let info = inspect_file(path)?;
     writeln!(output, "File: {}", path.display())?;
-    writeln!(output, "Lines: {}", info.line_count)?;
-    writeln!(output, "Size: {} bytes", info.byte_len)?;
+    writeln!(output, "Lines: {}", palette.bold(info.line_count))?;
+    writeln!(output, "Size: {} bytes", palette.bold(info.byte_len))?;
     writeln!(
         output,
         "Fingerprint: {}",
-        format_fingerprint(info.fingerprint, full_digest)
+        palette.bold(format_fingerprint(info.fingerprint, full_digest))
     )?;
     writeln!(output)?;
     writeln!(
@@ -104,9 +123,10 @@ fn run(
         input,
         output,
         diagnostics,
+        presentation,
         "Does this fingerprint match the other copy? [y/n] ",
     )? {
-        writeln!(output, "Files match.")?;
+        writeln!(output, "{}", palette.matched("Files match."))?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -114,7 +134,8 @@ fn run(
         input,
         output,
         diagnostics,
-        "Line count displayed by the other copy: ",
+        presentation,
+        "Enter the other copy's line count: ",
         "line",
     )?;
     let mut search = LineSearch::new(info.line_count, other_line_count)?;
@@ -123,23 +144,32 @@ fn run(
             LineSearchStep::CompareThroughLine { line } => {
                 let fingerprint = fingerprint_through_line(path, line)?;
                 writeln!(output)?;
-                writeln!(output, "Compare through line {line}:")?;
+                writeln!(
+                    output,
+                    "{}",
+                    palette.heading(format_args!("Compare through line {line}:"))
+                )?;
                 writeln!(
                     output,
                     "Fingerprint: {}",
-                    format_fingerprint(fingerprint, full_digest)
+                    palette.bold(format_fingerprint(fingerprint, full_digest))
                 )?;
                 let matched = read_match(
                     input,
                     output,
                     diagnostics,
+                    presentation,
                     "Does this fingerprint match? [y/n] ",
                 )?;
                 search.record_result(matched)?;
             }
             LineSearchStep::DifferenceAtLine { line } => {
                 writeln!(output)?;
-                writeln!(output, "First divergence: line {line}")?;
+                writeln!(
+                    output,
+                    "{}",
+                    palette.difference(format_args!("First divergence: line {line}"))
+                )?;
                 if line > info.line_count {
                     writeln!(output, "The local file ends before line {line}.")?;
                 }
@@ -151,10 +181,19 @@ fn run(
                     input,
                     output,
                     diagnostics,
+                    presentation,
                     "Continue within this line? [Y/n] ",
                     Some(true),
                 )? {
-                    localize_byte(path, line, full_digest, input, output, diagnostics)?;
+                    localize_byte(
+                        path,
+                        line,
+                        full_digest,
+                        presentation,
+                        input,
+                        output,
+                        diagnostics,
+                    )?;
                 }
                 writeln!(output)?;
                 writeln!(
@@ -174,22 +213,27 @@ fn localize_byte(
     path: &Path,
     line: u64,
     full_digest: bool,
+    presentation: Presentation,
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
 ) -> Result<(), WorkflowError> {
+    let palette = presentation.output;
     let local = inspect_line(path, line)?;
     let local_byte_len = local.map_or(0, |info| info.byte_len);
     writeln!(output)?;
     writeln!(
         output,
-        "Line {line} size: {local_byte_len} bytes (including any CR/LF)"
+        "Line {} size: {} bytes (including any CR/LF)",
+        palette.bold(line),
+        palette.bold(local_byte_len)
     )?;
     let other_byte_len = read_count(
         input,
         output,
         diagnostics,
-        "Byte count displayed for this line by the other copy: ",
+        presentation,
+        "Enter the other copy's byte count for this line: ",
         "byte",
     )?;
     let mut search = ByteSearch::new(local_byte_len, other_byte_len)?;
@@ -198,16 +242,21 @@ fn localize_byte(
             ByteSearchStep::CompareThroughByte { byte } => {
                 let fingerprint = fingerprint_line_prefix(path, line, byte)?;
                 writeln!(output)?;
-                writeln!(output, "Compare line {line} through byte {byte}:")?;
+                writeln!(
+                    output,
+                    "{}",
+                    palette.heading(format_args!("Compare line {line} through byte {byte}:"))
+                )?;
                 writeln!(
                     output,
                     "Fingerprint: {}",
-                    format_fingerprint(fingerprint, full_digest)
+                    palette.bold(format_fingerprint(fingerprint, full_digest))
                 )?;
                 let matched = read_match(
                     input,
                     output,
                     diagnostics,
+                    presentation,
                     "Does this fingerprint match? [y/n] ",
                 )?;
                 search.record_result(matched)?;
@@ -215,11 +264,11 @@ fn localize_byte(
             ByteSearchStep::DifferenceAtByte { byte } => {
                 let character = utf8_character_position(path, line, byte)?;
                 writeln!(output)?;
-                write!(output, "First divergence: line {line}, byte {byte}")?;
+                let mut result = format!("First divergence: line {line}, byte {byte}");
                 if let Some(character) = character {
-                    write!(output, " (UTF-8 character {character})")?;
+                    result.push_str(&format!(" (UTF-8 character {character})"));
                 }
-                writeln!(output)?;
+                writeln!(output, "{}", palette.difference(result))?;
                 if local.is_none() {
                     writeln!(
                         output,
@@ -257,9 +306,10 @@ fn format_fingerprint(fingerprint: Fingerprint, full_digest: bool) -> String {
 fn read_prompt(
     input: &mut impl BufRead,
     output: &mut impl Write,
+    palette: Palette,
     prompt: &str,
 ) -> Result<String, WorkflowError> {
-    write!(output, "{prompt}")?;
+    write!(output, "{}", palette.prompt(prompt))?;
     output.flush()?;
     let mut answer = String::new();
     input.read_line(&mut answer)?;
@@ -273,9 +323,10 @@ fn read_match(
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
+    presentation: Presentation,
     prompt: &str,
 ) -> Result<bool, WorkflowError> {
-    read_yes_no(input, output, diagnostics, prompt, None)
+    read_yes_no(input, output, diagnostics, presentation, prompt, None)
 }
 
 /// Reads a trimmed, case-insensitive yes/no answer with an optional default.
@@ -287,11 +338,12 @@ fn read_yes_no(
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
+    presentation: Presentation,
     prompt: &str,
     default: Option<bool>,
 ) -> Result<bool, WorkflowError> {
     loop {
-        let answer = read_prompt(input, output, prompt)?;
+        let answer = read_prompt(input, output, presentation.output, prompt)?;
         let answer = answer.trim();
         if answer.is_empty() {
             if let Some(default) = default {
@@ -304,7 +356,8 @@ fn read_yes_no(
         }
         writeln!(
             diagnostics,
-            "paircomp: invalid answer; enter y, yes, n, or no"
+            "{} invalid answer; enter y, yes, n, or no",
+            presentation.diagnostics.error("paircomp:")
         )?;
     }
 }
@@ -317,11 +370,12 @@ fn read_count(
     input: &mut impl BufRead,
     output: &mut impl Write,
     diagnostics: &mut impl Write,
+    presentation: Presentation,
     prompt: &str,
     kind: &str,
 ) -> Result<u64, WorkflowError> {
     loop {
-        let answer = read_prompt(input, output, prompt)?;
+        let answer = read_prompt(input, output, presentation.output, prompt)?;
         let answer = answer.trim();
         if !answer.is_empty() && answer.bytes().all(|byte| byte.is_ascii_digit()) {
             if let Ok(count) = answer.parse() {
@@ -330,7 +384,8 @@ fn read_count(
         }
         writeln!(
             diagnostics,
-            "paircomp: invalid {kind} count; enter a nonnegative decimal u64"
+            "{} invalid {kind} count; enter a nonnegative decimal u64",
+            presentation.diagnostics.error("paircomp:")
         )?;
     }
 }

@@ -54,13 +54,44 @@ paircomp --full-digest FILE
 Use the same display mode on both systems. The collision probabilities for each
 mode are explained under [fingerprint limits](#exit-status-and-fingerprint-limits).
 
+## Terminal appearance
+
+Paircomp uses cyan prompts and bold cyan comparison headings, bold counts and
+fingerprints, green match results, bold yellow divergence results, and red
+diagnostic labels. Fingerprints use the terminal's default foreground color;
+the exact shades of the other colors depend on your terminal's palette. The
+wording conveys the same information when color is disabled.
+
+For comparison output, the default, `--color auto`, enables color and emphasis
+only when the output stream is a terminal, `TERM` is not `dumb`, and `NO_COLOR`
+is unset or empty.
+Stdout and stderr are checked separately, so redirecting one does not disable
+color on the other. Redirected output is plain by default, including when
+`CLICOLOR_FORCE` is set.
+
+Use `--color never` to disable all color and emphasis, or `--color always` to
+force them, including in redirected output. These explicit choices override
+`NO_COLOR` and `TERM=dumb` for comparison output and its diagnostics:
+
+```sh
+paircomp --color never FILE
+paircomp --color always --full-digest FILE
+```
+
+Help and invocation errors use clap's default color handling independently of
+`--color`.
+
+Each copy may choose its own color setting; color does not affect fingerprint
+text, the comparison protocol, or exit statuses.
+
 ## Compare two copies
 
 1. Start `paircomp FILE` separately on both systems. Compare the displayed
    whole-file fingerprints. If they match, answer `y` on both instances and the
    comparison is complete.
 2. If they differ, answer `n` on both. Enter the **other** instance's displayed
-   line count on each system, even when the counts are equal.
+   line count at `Enter the other copy's line count:` on each system, even when
+   the counts are equal.
 3. Both instances will request a fingerprint through the same line number.
    Compare those fingerprints and give the same `y` or `n` answer to each.
    Repeat until both report the first differing line. A shorter file may report
@@ -68,9 +99,10 @@ mode are explained under [fingerprint limits](#exit-status-and-fingerprint-limit
 4. At `Continue within this line? [Y/n]`, press Enter or answer `y` on both
    instances to continue, or answer `n` on both to finish at the line.
 5. To continue, enter the **other** instance's displayed byte count for that
-   line, even when the counts are equal. The count includes any CR/LF bytes;
-   a missing line has zero bytes. Compare the requested line-prefix fingerprints
-   and give the same answers until both report the first differing byte.
+   line at `Enter the other copy's byte count for this line:`, even when the
+   counts are equal. The count includes any CR/LF bytes; a missing line has
+   zero bytes. Compare the requested line-prefix fingerprints and give the
+   same answers until both report the first differing byte.
 
 Answers accept `y`/`yes` and `n`/`no`, regardless of case or surrounding
 whitespace. Fingerprint `[y/n]` prompts require an explicit answer; blank or
@@ -181,7 +213,7 @@ code is licensed [MPL-2.0](COPYING). Its direct third-party dependencies are:
 | Dependency (locked version) | Used by | Purpose | License |
 |---|---|---|---|
 | [`blake3` 1.8.7](https://github.com/BLAKE3-team/BLAKE3) | `paircomp-core` | Full-file, through-line, and within-line prefix fingerprints | [CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception](https://docs.rs/crate/blake3/1.8.7/source/Cargo.toml.orig) |
-| [`clap` 4.6.7](https://github.com/clap-rs/clap) with `derive` | `paircomp` | Parse the file argument and provide help/version output | [MIT OR Apache-2.0](https://docs.rs/crate/clap/4.6.7/source/Cargo.toml.orig) |
+| [`clap` 4.6.7](https://github.com/clap-rs/clap) with `derive` | `paircomp` | Parse arguments, provide help/version output, and style terminal output | [MIT OR Apache-2.0](https://docs.rs/crate/clap/4.6.7/source/Cargo.toml.orig) |
 
 The exact dependency versions, including transitive packages, are recorded in
 [`Cargo.lock`](Cargo.lock). The license expressions above are from the locked

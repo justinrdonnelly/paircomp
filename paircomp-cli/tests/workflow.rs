@@ -45,9 +45,29 @@ fn invoke(path: &Path, answers: &str) -> Output {
 }
 
 fn invoke_with_args(path: &Path, args: &[&str], answers: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_paircomp"))
+    invoke_with_env(path, args, answers, &[])
+}
+
+fn paircomp_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_paircomp"));
+    command
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .env("TERM", "xterm-256color");
+    command
+}
+
+fn invoke_with_env(
+    path: &Path,
+    args: &[&str],
+    answers: &str,
+    environment: &[(&str, &str)],
+) -> Output {
+    let mut child = paircomp_command()
         .arg(path)
         .args(args)
+        .envs(environment.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -88,24 +108,25 @@ fn fingerprints(output: &Output) -> Vec<String> {
 
 #[test]
 fn help_version_and_argument_errors() {
-    let binary = env!("CARGO_BIN_EXE_paircomp");
-    let help = Command::new(binary).arg("--help").output().unwrap();
+    let help = paircomp_command().arg("--help").output().unwrap();
     assert_eq!(help.status.code(), Some(0));
     assert!(stdout(&help).contains("Usage: paircomp [OPTIONS] <FILE>"));
     assert!(stdout(&help).contains("--full-digest"));
     assert!(stdout(&help).contains("Display all 64 hexadecimal digits instead of the first 8"));
+    assert!(stdout(&help).contains("--color <COLOR>"));
+    assert!(stdout(&help).contains("auto, always, never"));
 
-    let version = Command::new(binary).arg("--version").output().unwrap();
+    let version = paircomp_command().arg("--version").output().unwrap();
     assert_eq!(version.status.code(), Some(0));
     assert!(stdout(&version).contains(concat!("paircomp ", env!("CARGO_PKG_VERSION"))));
 
     for args in [&[][..], &["--full-digest"][..]] {
-        let missing = Command::new(binary).args(args).output().unwrap();
+        let missing = paircomp_command().args(args).output().unwrap();
         assert_eq!(missing.status.code(), Some(2));
         assert!(stderr(&missing).contains("<FILE>"));
     }
 
-    let extra = Command::new(binary)
+    let extra = paircomp_command()
         .args(["first", "second"])
         .output()
         .unwrap();
@@ -125,7 +146,7 @@ fn confirmed_whole_file_match_exits_successfully() {
         assert!(text.contains("Use the same fingerprint display mode on both copies."));
         assert!(text.contains("Keep both files unchanged"));
         assert!(text.contains("Files match."));
-        assert!(!text.contains("Line count displayed by the other copy"));
+        assert!(!text.contains("Enter the other copy's line count"));
         assert!(!text.contains("Continue within this line"));
         assert!(!text.contains("Compare line"));
         assert!(output.stderr.is_empty());
@@ -179,7 +200,7 @@ fn equal_counts_follow_core_search_and_report_a_difference() {
     let output = invoke(fixture.path(), "n\n 4 \ny\n NO \nn\n");
     assert_eq!(output.status.code(), Some(1));
     let text = stdout(&output);
-    assert!(text.contains("Line count displayed by the other copy: "));
+    assert!(text.contains("Enter the other copy's line count: "));
     assert!(text.contains("Compare through line 2:"));
     assert!(text.contains("Compare through line 3:"));
     let prefix_digest = digest_hex(fingerprint_through_line(fixture.path(), 2).unwrap());
@@ -190,7 +211,7 @@ fn equal_counts_follow_core_search_and_report_a_difference() {
     assert!(text.contains("First divergence: line 3"));
     assert!(!text.contains("local file ends before"));
     assert!(text.contains("Continue within this line? [Y/n]"));
-    assert!(!text.contains("Byte count displayed"));
+    assert!(!text.contains("Enter the other copy's byte count"));
     assert!(output.stderr.is_empty());
 }
 
@@ -254,7 +275,7 @@ fn fingerprint_prompts_reject_blank_answers_at_every_stage() {
         (
             "",
             "Does this fingerprint match the other copy? [y/n] ",
-            "Line count displayed by the other copy:",
+            "Enter the other copy's line count:",
         ),
         (
             "n\n2\n",
@@ -297,7 +318,7 @@ fn invalid_input_repeats_each_prompt_and_accepts_a_corrected_answer() {
         (
             "n\n",
             " 2 \ny\n\n3\nn\ny\n",
-            "Line count displayed by the other copy: ",
+            "Enter the other copy's line count: ",
             invalid_counts,
             "invalid line count; enter a nonnegative decimal u64",
             1,
@@ -329,7 +350,7 @@ fn invalid_input_repeats_each_prompt_and_accepts_a_corrected_answer() {
         (
             "n\n2\ny\n\n",
             " 3 \nn\ny\n",
-            "Byte count displayed for this line by the other copy: ",
+            "Enter the other copy's byte count for this line: ",
             invalid_counts,
             "invalid byte count; enter a nonnegative decimal u64",
             1,
@@ -453,7 +474,7 @@ fn paired_cli_instances_stay_aligned_after_retries_and_default_continuation() {
         assert_eq!(output.status.code(), Some(1));
         let text = stdout(output);
         assert!(text.contains("Line 2 size: 5 bytes (including any CR/LF)"));
-        assert!(text.contains("Byte count displayed for this line by the other copy:"));
+        assert!(text.contains("Enter the other copy's byte count for this line:"));
         assert!(text.contains("Compare line 2 through byte 3:"));
         assert!(text.contains("Compare line 2 through byte 4:"));
         assert!(text.contains("First divergence: line 2, byte 5 (UTF-8 character 4)"));
@@ -541,4 +562,182 @@ fn within_line_eof_aborts_even_after_invalid_input() {
     let output = invoke(empty.path(), "n\n1\ny\n0\n");
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("two zero-length lines cannot differ"));
+}
+
+/// Remove SGR styling, retaining every character of the interaction itself.
+fn without_color(text: &str) -> String {
+    let mut plain = String::new();
+    let mut chars = text.chars();
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            assert_eq!(chars.next(), Some('['));
+            loop {
+                match chars.next() {
+                    Some('m') => break,
+                    Some(value) if value.is_ascii_digit() || value == ';' => {}
+                    other => panic!("unexpected terminal sequence: {other:?}"),
+                }
+            }
+        } else {
+            plain.push(character);
+        }
+    }
+    plain
+}
+
+#[test]
+fn redirected_output_is_plain_in_automatic_and_never_modes() {
+    let fixture = Fixture::new(b"ab\ncd\n");
+    for args in [&[][..], &["--color", "auto"][..], &["--color=never"][..]] {
+        for environment in [
+            &[][..],
+            &[("NO_COLOR", "1")][..],
+            &[("TERM", "dumb")][..],
+            &[("CLICOLOR_FORCE", "1")][..],
+        ] {
+            let output = invoke_with_env(
+                fixture.path(),
+                args,
+                "n\nbad\n2\ny\n\n3\nn\ny\n",
+                environment,
+            );
+            assert_eq!(output.status.code(), Some(1));
+            assert!(!stdout(&output).contains('\u{1b}'));
+            assert!(!stderr(&output).contains('\u{1b}'));
+            assert!(stdout(&output).contains("First divergence: line 2, byte 2"));
+            assert!(stderr(&output).contains("invalid line count"));
+
+            let fatal = invoke_with_env(&fixture.dir, args, "", environment);
+            assert_eq!(fatal.status.code(), Some(2));
+            assert!(fatal.stdout.is_empty());
+            assert!(!stderr(&fatal).contains('\u{1b}'));
+            assert!(stderr(&fatal).contains("not a regular file"));
+        }
+    }
+}
+
+#[test]
+fn forced_color_preserves_paired_searches_and_both_digest_lengths() {
+    let first = Fixture::new("same\ncafé".as_bytes());
+    let second = Fixture::new("same\ncafè".as_bytes());
+    let answers = "maybe\nn\nbad\n2\nmaybe\ny\nmaybe\n\nbad\n5\nmaybe\ny\ny\n";
+    for full_digest in [false, true] {
+        let mut plain_args = vec!["--color=never"];
+        let mut colored_args = vec!["--color=always"];
+        if full_digest {
+            plain_args.push("--full-digest");
+            colored_args.push("--full-digest");
+        }
+        let plain = invoke_with_args(first.path(), &plain_args, answers);
+        let colored = invoke_with_args(first.path(), &colored_args, answers);
+        let paired = invoke_with_args(second.path(), &colored_args, answers);
+        assert_eq!(colored.status.code(), Some(1));
+        assert_eq!(paired.status.code(), Some(1));
+        assert_eq!(without_color(&stdout(&colored)), stdout(&plain));
+        assert_eq!(without_color(&stderr(&colored)), stderr(&plain));
+
+        let text = stdout(&colored);
+        assert!(text.contains("Lines: \u{1b}[1m2\u{1b}[0m"));
+        assert!(text.contains("Size: \u{1b}[1m10\u{1b}[0m bytes"));
+        assert!(text.contains("\u{1b}[36mCompare through line 1:\u{1b}[0m"));
+        assert!(text.contains("\u{1b}[36mCompare line 2 through byte 3:\u{1b}[0m"));
+        assert!(text.contains("\u{1b}[36mCompare line 2 through byte 4:\u{1b}[0m"));
+        assert!(
+            text.contains("\u{1b}[36mDoes this fingerprint match the other copy? [y/n] \u{1b}[0m")
+        );
+        assert!(text.contains("\u{1b}[36mEnter the other copy's line count: \u{1b}[0m"));
+        assert!(text.contains("\u{1b}[36mContinue within this line? [Y/n] \u{1b}[0m"));
+        assert!(
+            text.contains("\u{1b}[36mEnter the other copy's byte count for this line: \u{1b}[0m")
+        );
+        assert!(text.contains("Line \u{1b}[1m2\u{1b}[0m size: \u{1b}[1m5\u{1b}[0m bytes"));
+        assert!(text.contains("\u{1b}[33mFirst divergence: line 2\u{1b}[0m"));
+        assert!(text
+            .contains("\u{1b}[33mFirst divergence: line 2, byte 5 (UTF-8 character 4)\u{1b}[0m"));
+        assert!(stderr(&colored).contains("\u{1b}[31mpaircomp:\u{1b}[0m invalid answer"));
+
+        let expected = fingerprints(&plain);
+        for digest in &expected {
+            assert!(text.contains(&format!("Fingerprint: \u{1b}[1m{digest}\u{1b}[0m")));
+            assert_eq!(digest.len(), if full_digest { 64 } else { 8 });
+        }
+        let paired_text = without_color(&stdout(&paired));
+        let paired_hashes = paired_text
+            .lines()
+            .filter_map(|line| line.strip_prefix("Fingerprint: "))
+            .collect::<Vec<_>>();
+        assert_eq!(paired_hashes.len(), expected.len());
+        assert_ne!(paired_hashes[0], expected[0]);
+        assert_eq!(paired_hashes[1..], expected[1..]);
+        assert!(paired_text.contains("First divergence: line 2, byte 5 (UTF-8 character 4)"));
+    }
+}
+
+#[test]
+fn explicit_color_overrides_environment_for_matches_and_fatal_errors() {
+    let fixture = Fixture::new(b"a\n");
+    for environment in [
+        &[][..],
+        &[("NO_COLOR", "1")][..],
+        &[("TERM", "dumb")][..],
+        &[("NO_COLOR", "1"), ("TERM", "dumb")][..],
+    ] {
+        let output = invoke_with_env(fixture.path(), &["--color", "always"], "y\n", environment);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(stdout(&output).contains("\u{1b}[32mFiles match.\u{1b}[0m"));
+        assert!(output.stderr.is_empty());
+
+        for (path, answers, diagnostic) in [
+            (fixture.path(), "", "input ended"),
+            (fixture.dir.as_path(), "", "not a regular file"),
+        ] {
+            let fatal = invoke_with_env(path, &["--color=always"], answers, environment);
+            assert_eq!(fatal.status.code(), Some(2));
+            assert!(stderr(&fatal).contains("\u{1b}[31mpaircomp:\u{1b}[0m "));
+            assert!(stderr(&fatal).contains(diagnostic));
+        }
+    }
+}
+
+#[test]
+fn help_and_argument_errors_use_claps_default_color_handling() {
+    for mode in ["always", "never", "auto"] {
+        for args in [
+            vec!["--help", "--color", mode],
+            vec!["--color", mode, "--help"],
+        ] {
+            let help = paircomp_command()
+                .args(args)
+                .env("NO_COLOR", "1")
+                .env("TERM", "dumb")
+                .output()
+                .unwrap();
+            assert_eq!(help.status.code(), Some(0));
+            assert!(!stdout(&help).contains('\u{1b}'));
+            assert!(without_color(&stdout(&help)).contains("--color <COLOR>"));
+            assert!(help.stderr.is_empty());
+        }
+        let invalid = paircomp_command()
+            .args(["--unknown", &format!("--color={mode}")])
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap();
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(invalid.stdout.is_empty());
+        assert!(!stderr(&invalid).contains('\u{1b}'));
+        assert!(without_color(&stderr(&invalid)).contains("--unknown"));
+    }
+    for args in [vec!["--color"], vec!["--color=invalid"]] {
+        let invalid = paircomp_command().args(args).output().unwrap();
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(stderr(&invalid).contains("--color"));
+    }
+    // A flag-shaped argument after `--` remains a literal file path.
+    let literal_path = paircomp_command()
+        .args(["--", "--color=always", "extra"])
+        .output()
+        .unwrap();
+    assert_eq!(literal_path.status.code(), Some(2));
+    assert!(!stderr(&literal_path).contains('\u{1b}'));
+    assert!(stderr(&literal_path).contains("extra"));
 }
