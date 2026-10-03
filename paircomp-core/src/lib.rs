@@ -179,7 +179,41 @@ impl AsRef<[u8]> for Fingerprint {
 }
 
 /// An error returned by a core operation.
+///
+/// This enum is non-exhaustive so new variants can be added in future releases.
+/// Callers outside this crate must include a wildcard arm when matching:
+///
+/// ```
+/// use paircomp_core::Error;
+///
+/// fn report(error: &Error) {
+///     match error {
+///         Error::Io(source) => eprintln!("I/O error: {source}"),
+///         _ => eprintln!("{error}"),
+///     }
+/// }
+/// ```
+///
+/// Matching only the currently known variants does not compile:
+///
+/// ```compile_fail,E0004
+/// use paircomp_core::Error;
+///
+/// fn report(error: &Error) {
+///     match error {
+///         Error::Io(_) => {},
+///         Error::NotRegularFile
+///         | Error::FileTooLarge
+///         | Error::EmptyFilesCannotDiffer
+///         | Error::EmptyLinesCannotDiffer
+///         | Error::InvalidLineNumber
+///         | Error::InvalidBytePosition
+///         | Error::SearchAlreadyComplete => {},
+///     }
+/// }
+/// ```
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Metadata lookup, opening, or reading the file failed.
     Io(io::Error),

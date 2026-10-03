@@ -377,6 +377,7 @@ Inspect/correct the corresponding files, then run paircomp again.
 ## 9. Error handling
 
 - Return library errors; do not print from `paircomp-core`.
+- The public core `Error` enum is non-exhaustive so future releases may add variants. Downstream matches must include a wildcard arm. Adding this policy breaks existing exhaustive matches; callers migrating from 1.0.0 must add a fallback arm.
 - CLI diagnostics go to stderr; normal interactive/output information goes to stdout.
 - Exit with status 0 when the user confirms a whole-file match, or for successful `--help`/`--version` output.
 - Exit with status 1 after the user declines within-line continuation or successfully completes the byte search.
