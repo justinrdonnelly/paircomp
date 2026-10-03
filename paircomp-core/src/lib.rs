@@ -19,6 +19,84 @@
 //! Both instances must use accurate counts and the same comparison answers.
 //! Localization also assumes that distinct prefixes have distinct fingerprints.
 //!
+//! ## Example
+//!
+//! This runnable example uses two fixture files to simulate the counts and
+//! fingerprints supplied by the other instance. In a real frontend, each
+//! instance opens only its own file; the caller obtains the other instance's
+//! counts and a match/no-match answer for each fingerprint comparison.
+//! Keep both files [unchanged](#file-stability) throughout the comparison.
+//! The example chooses to continue into the optional within-line search.
+//!
+//! ```
+//! use paircomp_core::{
+//!     fingerprint_line_prefix, fingerprint_through_line, inspect_file, inspect_line,
+//!     utf8_character_position, ByteSearch, ByteSearchStep, LineSearch, LineSearchStep,
+//! };
+//! use std::fs;
+//!
+//! let directory = std::env::temp_dir()
+//!     .join(format!("paircomp-workflow-example-{}", std::process::id()));
+//! fs::create_dir(&directory)?;
+//! let local_path = directory.join("local.txt");
+//! let other_path = directory.join("other.txt");
+//! fs::write(&local_path, "header\ncafé\nfooter\n")?;
+//! fs::write(&other_path, "header\ncafè\nfooter\n")?;
+//!
+//! let local = inspect_file(&local_path)?;
+//! let other = inspect_file(&other_path)?; // Simulates metadata from the other instance.
+//! if local.fingerprint == other.fingerprint {
+//!     println!("The files match.");
+//! } else {
+//!     // Start searching only after establishing the whole-file mismatch.
+//!     let mut search = LineSearch::new(local.line_count, other.line_count)?;
+//!     let line = loop {
+//!         match search.current_step() {
+//!             LineSearchStep::CompareThroughLine { line } => {
+//!                 let fingerprint = fingerprint_through_line(&local_path, line)?;
+//!                 let other_fingerprint = fingerprint_through_line(&other_path, line)?;
+//!                 // The frontend would ask whether the displayed fingerprints match.
+//!                 search.record_result(fingerprint == other_fingerprint)?;
+//!             }
+//!             LineSearchStep::DifferenceAtLine { line } => break line,
+//!         }
+//!     };
+//!     assert_eq!(line, 2);
+//!
+//!     // Both instances choose to continue. Counts include LF; absence means zero.
+//!     let local_byte_len = inspect_line(&local_path, line)?.map_or(0, |info| info.byte_len);
+//!     let other_byte_len = inspect_line(&other_path, line)?.map_or(0, |info| info.byte_len);
+//!     let mut search = ByteSearch::new(local_byte_len, other_byte_len)?;
+//!     let byte = loop {
+//!         match search.current_step() {
+//!             ByteSearchStep::CompareThroughByte { byte } => {
+//!                 // These raw-byte prefixes can end inside a UTF-8 code point.
+//!                 let fingerprint = fingerprint_line_prefix(&local_path, line, byte)?;
+//!                 let other_fingerprint = fingerprint_line_prefix(&other_path, line, byte)?;
+//!                 search.record_result(fingerprint == other_fingerprint)?;
+//!             }
+//!             ByteSearchStep::DifferenceAtByte { byte } => break byte,
+//!         }
+//!     };
+//!     assert_eq!(byte, 5);
+//!     println!("First difference: line {line}, byte {byte}");
+//!     if line > local.line_count {
+//!         println!("The local file has no such line.");
+//!     } else if byte > local_byte_len {
+//!         println!("The local line has no such byte.");
+//!     }
+//!
+//!     // Character positions are supplementary and require valid UTF-8 for the whole line.
+//!     let character = utf8_character_position(&local_path, line, byte)?;
+//!     assert_eq!(character, Some(4));
+//!     if let Some(position) = character {
+//!         println!("UTF-8 code-point position: {position}");
+//!     }
+//! }
+//! fs::remove_dir_all(&directory)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! # Bytes and positions
 //!
 //! Hashing uses raw bytes without normalization or UTF-8 decoding. LF terminates
