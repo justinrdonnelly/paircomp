@@ -101,9 +101,19 @@ CPU and libc/library requirements, and source timestamp.
 Both archives use the pinned GNU image's tar/gzip. Entries have sorted names,
 the source commit's timestamp, numeric owner/group zero, and fixed permissions;
 gzip omits the timestamp and original filename. Compiler paths are consistent
-and remapped; compiled release output is fresh. These measures pin and document
-the environment. **Automated reproducibility comparisons are deferred**; no
-byte-for-byte reproducibility guarantee is made.
+and remapped; compiled release output is fresh.
+
+GNU and musl Linux release archives have been reproduced byte for byte between
+local builds, a VM, and GitHub Actions using the same source commit and this
+documented, pinned build environment. Matching complete archives covers the
+executables, bundled files, and archive metadata. Reproducibility applies to
+this specified build recipe and environment, following the
+[Reproducible Builds definition](https://reproducible-builds.org/docs/definition/).
+
+Reproducibility has been verified manually; the workflow does not yet compare
+independent builds automatically. To verify another commit, rebuild it with
+the same recipe and pins and compare the complete archive hashes with the
+corresponding GitHub Actions downloads.
 
 ## Test before releasing
 

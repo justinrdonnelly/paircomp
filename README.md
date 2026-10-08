@@ -22,6 +22,8 @@ its minimum glibc version and tested distributions before choosing it.
 Extract the archive and run the included `paircomp` executable on each system.
 Prebuilt downloads do not require Rust to be installed.
 
+The documented release recipe has produced byte-identical GNU and musl archives
+in independent local and GitHub Actions builds.
 Maintainers can build the x86-64 GNU and musl archives with rootless Podman.
 See the [release guide](https://github.com/justinrdonnelly/paircomp/blob/main/docs/releases.md) for local builds, the automated draft
 workflow, tagging, and recovery. Crates.io publishing remains manual.
