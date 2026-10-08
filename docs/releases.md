@@ -144,15 +144,17 @@ paircomp-1.2.3-x86_64-unknown-linux-gnu/paircomp --help
 
 After the workflow is merged into `main`, select **Linux downloads and draft
 release → Run workflow** in GitHub Actions and choose `main`. Dispatch is
-**build-only**: it returns the combined `paircomp-linux-downloads` Actions
-artifact without invoking the draft job. The two individual build artifacts
-are also available. All expire after 14 days. Dispatch may select a development
-branch and build its crate version without a version tag or membership in
-`main`.
+**build-only**: it returns three individually downloadable Actions artifacts
+without invoking the draft job: the GNU `.tar.gz`, the musl `.tar.gz`, and
+`SHA256SUMS`. Each downloads directly as its original file, without a ZIP
+wrapper. Download all three into the same directory and run
+`sha256sum -c SHA256SUMS`. All expire after 14 days. Dispatch may select a
+development branch and build its crate version without a version tag or
+membership in `main`.
 
-The first rollout still needs a real rootless container run. Test actual GitHub
-draft creation with the **next real stable CLI release tag** after the build-only
-run succeeds. Prerelease tags are rejected and are unnecessary for testing.
+Test actual GitHub draft creation with the **next real stable CLI release tag**
+after the build-only run succeeds. Prerelease tags are rejected and are
+unnecessary for testing.
 
 ## Tag and review a stable release
 
@@ -198,10 +200,11 @@ failed job to complete missing uploads from the existing Actions artifacts;
 rerunning all jobs rebuilds from the same source and pins and compares the new
 assets. Rebuilt **Actions artifacts** can replace that run's earlier build
 artifacts; **release assets** are always compared and never replaced. The bundle
-job downloads the GNU and musl artifacts by their exact names, and the draft job
-downloads the verified bundle by its artifact ID. Edited notes survive either
-rerun. The log prints the draft URL and
-expected asset list before uploads, including when a later upload fails.
+job downloads the GNU and musl artifacts by the IDs returned by the build jobs,
+verifies them, and uploads `SHA256SUMS` separately. It passes all three artifact
+IDs to the draft job, which downloads those exact files. Edited notes survive
+either rerun. The log prints the draft URL and expected asset list before
+uploads, including when a later upload fails.
 
 A differing asset, a GitHub `starter`/incomplete asset, a changed tag, or an
 already published release makes the job fail. It never deletes or replaces
@@ -243,6 +246,11 @@ MIT-licensed actions (licenses checked at the pinned revisions):
 
 These versions use Node.js 24 and
 [require Actions Runner 2.327.1 or newer](https://github.com/actions/checkout/blob/3d3c42e5aac5ba805825da76410c181273ba90b1/README.md#checkout-v5).
-Uploads use the default ZIP format and downloads extract it into `dist`.
+Uploads set
+[`archive: false`](https://github.com/actions/upload-artifact/blob/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/README.md#upload-an-individual-file-unzipped),
+which permits one file per artifact and uses its basename as the artifact name.
+The explicit `name` also matches that basename so `overwrite: true` deletes the
+correct artifact on reruns. Downloads use `skip-decompress: true` to preserve
+each file in `dist`.
 Download-artifact v8
 [fails on an artifact digest mismatch by default](https://github.com/actions/download-artifact/blob/3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/README.md#v8---whats-new).
