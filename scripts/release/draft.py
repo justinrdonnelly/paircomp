@@ -120,7 +120,7 @@ Source commit: `{info['commit']}`. Rust: `{gnu['rust_toolchain']}`. Default feat
 - GNU builder and packaging image: `{gnu['builder_image']}`
 - musl builder: `{musl['builder_image']}`
 
-The toolchain and images are pinned and archive metadata is normalized. Automated reproducibility comparisons are planned separately. Crates.io publication is manual.
+The toolchain and images are pinned and archive metadata is normalized. Before preparing this draft, the release workflow requires an independent rebuild on a fresh runner to match both complete archives and SHA256SUMS byte for byte. Crates.io publication is manual.
 """
 
 

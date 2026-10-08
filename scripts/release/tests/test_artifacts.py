@@ -47,7 +47,11 @@ class ArtifactTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(["git", *args], text=True, stderr=subprocess.PIPE).strip()
 
-    def make_archive(self, target, *, changed_info=None, bad_mode=False, extra=False, gzip_mtime=0, readme=None):
+    def make_archive(
+        self, target, *, changed_info=None, bad_mode=False, extra=False,
+        gzip_mtime=0, readme=None, directory="dist",
+        executable=b"\x7fELFsynthetic fixture",
+    ):
         root = f"paircomp-1.2.3-{target}"
         is_gnu = target.endswith("-gnu")
         build_info = {
@@ -65,7 +69,7 @@ class ArtifactTests(unittest.TestCase):
         build_info.update(changed_info or {})
         files = {
             # Synthetic ELF marker tests archive validation, not binary linking.
-            "paircomp": b"\x7fELFsynthetic fixture",
+            "paircomp": executable,
             "README.md": readme if readme is not None else Path("README.md").read_bytes(),
             "COPYING": Path("COPYING").read_bytes(),
             "BUILD-INFO.txt": "".join(f"{key}={value}\n" for key, value in build_info.items()).encode(),
@@ -74,22 +78,29 @@ class ArtifactTests(unittest.TestCase):
             files["unexpected"] = b"extra entry"
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode="w", format=tarfile.GNU_FORMAT) as archive:
-            directory = tarfile.TarInfo(root)
-            directory.type = tarfile.DIRTYPE
-            directory.mode = 0o755
-            directory.mtime = self.info["source_date_epoch"]
-            archive.addfile(directory)
+            root_entry = tarfile.TarInfo(root)
+            root_entry.type = tarfile.DIRTYPE
+            root_entry.mode = 0o755
+            root_entry.mtime = self.info["source_date_epoch"]
+            archive.addfile(root_entry)
             for name, data in sorted(files.items()):
                 member = tarfile.TarInfo(f"{root}/{name}")
                 member.size = len(data)
                 member.mode = 0o755 if name == "paircomp" else 0o644
                 if bad_mode and name == "paircomp":
                     member.mode = 0o777
-                member.mtime = directory.mtime
+                member.mtime = root_entry.mtime
                 archive.addfile(member, io.BytesIO(data))
-        path = Path("dist") / (root + ".tar.gz")
+        path = Path(directory) / (root + ".tar.gz")
         path.write_bytes(gzip.compress(output.getvalue(), mtime=gzip_mtime))
         return path
+
+    def make_comparison_bundle(self):
+        artifacts.verify_bundle("dist", self.info, write_checksums=True)
+        Path("rebuild").mkdir()
+        for target in artifacts.TARGETS:
+            self.make_archive(target, directory="rebuild")
+        return artifacts.verify_bundle("rebuild", self.info, write_checksums=True)
 
     def test_valid_bundle_and_checksum_verification(self):
         paths = artifacts.verify_bundle("dist", self.info, write_checksums=True)
@@ -149,3 +160,95 @@ class ArtifactTests(unittest.TestCase):
         Path("README.md").write_text("uncommitted edit")
         Path("Cargo.lock").write_text("uncommitted lockfile")
         artifacts.verify_bundle("dist", self.info, write_checksums=True)
+
+    def test_independent_matching_bundles_are_not_modified(self):
+        self.make_comparison_bundle()
+        paths = [path for directory in ("dist", "rebuild") for path in Path(directory).iterdir()]
+        before = {path: path.read_bytes() for path in paths}
+        compared = artifacts.compare_bundles("dist", "rebuild", self.info)
+        self.assertEqual([path.name for path in compared], artifacts.archive_names("1.2.3") + ["SHA256SUMS"])
+        self.assertEqual({path: path.read_bytes() for path in paths}, before)
+
+    def test_changed_executable_in_either_target_fails_reproducibility(self):
+        self.make_comparison_bundle()
+        for target in artifacts.TARGETS:
+            with self.subTest(target=target):
+                changed = self.make_archive(target, directory="rebuild", executable=b"\x7fELFdifferent executable")
+                artifacts.verify_bundle("rebuild", self.info, write_checksums=True)
+                with self.assertRaisesRegex(ValueError, "Reproducibility mismatch") as caught:
+                    artifacts.compare_bundles("dist", "rebuild", self.info)
+                self.assertIn(changed.name, str(caught.exception))
+                self.assertIn(artifacts.sha256(changed), str(caught.exception))
+                self.assertIn(artifacts.sha256(Path("dist", changed.name)), str(caught.exception))
+                self.make_archive(target, directory="rebuild")
+                artifacts.verify_bundle("rebuild", self.info, write_checksums=True)
+
+    def test_comparison_rejects_wrong_source_in_either_bundle(self):
+        self.make_comparison_bundle()
+        target = artifacts.TARGETS[0]
+        for directory in ("dist", "rebuild"):
+            with self.subTest(directory=directory):
+                self.make_archive(target, directory=directory, changed_info={"source_commit": "wrong"})
+                with self.assertRaisesRegex(ValueError, "source/pins"):
+                    artifacts.compare_bundles("dist", "rebuild", self.info)
+                self.make_archive(target, directory=directory)
+
+    def test_comparison_rejects_and_preserves_bad_checksums_in_either_bundle(self):
+        self.make_comparison_bundle()
+        for directory in ("dist", "rebuild"):
+            with self.subTest(directory=directory):
+                sums = Path(directory, "SHA256SUMS")
+                original = sums.read_bytes()
+                sums.write_bytes(b"wrong checksums\n")
+                with self.assertRaisesRegex(ValueError, "SHA256SUMS"):
+                    artifacts.compare_bundles("dist", "rebuild", self.info)
+                self.assertEqual(sums.read_bytes(), b"wrong checksums\n")
+                sums.write_bytes(original)
+
+    def test_comparison_rejects_missing_archive_in_either_bundle(self):
+        self.make_comparison_bundle()
+        for directory in ("dist", "rebuild"):
+            for filename in artifacts.archive_names("1.2.3"):
+                with self.subTest(directory=directory, filename=filename):
+                    path = Path(directory, filename)
+                    original = path.read_bytes()
+                    path.unlink()
+                    with self.assertRaises(FileNotFoundError):
+                        artifacts.compare_bundles("dist", "rebuild", self.info)
+                    path.write_bytes(original)
+
+    def test_checksum_file_must_match_as_bytes(self):
+        self.make_comparison_bundle()
+        sums = Path("rebuild/SHA256SUMS")
+        sums.write_bytes(sums.read_bytes().replace(b"\n", b"\r\n"))
+        # Both sets of checksums describe the same archives, but the files differ.
+        artifacts.verify_bundle("rebuild", self.info)
+        with self.assertRaisesRegex(ValueError, "Reproducibility mismatch") as caught:
+            artifacts.compare_bundles("dist", "rebuild", self.info)
+        self.assertIn("SHA256SUMS", str(caught.exception))
+        self.assertNotIn(".tar.gz", str(caught.exception))
+
+    def test_comparison_command_exit_status(self):
+        self.make_comparison_bundle()
+        command = [sys.executable, artifacts.__file__, "--commit", self.info["commit"], "--compare", "rebuild", "dist"]
+        matched = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(matched.returncode, 0, matched.stderr)
+        self.assertIn(self.info["commit"], matched.stdout)
+        self.assertIn("SHA256SUMS", matched.stdout)
+        self.make_archive(artifacts.TARGETS[0], directory="rebuild", executable=b"\x7fELFdifferent executable")
+        artifacts.verify_bundle("rebuild", self.info, write_checksums=True)
+        differed = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(differed.returncode, 1)
+        self.assertIn("Reproducibility mismatch", differed.stderr)
+
+    def test_comparison_command_cannot_rewrite_checksums(self):
+        self.make_comparison_bundle()
+        sums = Path("dist/SHA256SUMS")
+        sums.write_bytes(b"preserve this invalid checksum file\n")
+        refused = subprocess.run(
+            [sys.executable, artifacts.__file__, "--commit", self.info["commit"],
+             "--compare", "rebuild", "--write-checksums", "dist"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(sums.read_bytes(), b"preserve this invalid checksum file\n")

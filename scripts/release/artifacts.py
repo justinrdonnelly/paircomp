@@ -1,4 +1,4 @@
-"""Check release archive metadata and create/verify the combined SHA256SUMS."""
+"""Verify release bundles, create SHA256SUMS, or compare independent builds."""
 
 import argparse
 import hashlib
@@ -116,14 +116,41 @@ def verify_bundle(directory, info, write_checksums=False):
     return paths + [sums_path]
 
 
+def compare_bundles(directory, comparison, info):
+    paths = verify_bundle(directory, info)
+    comparison_paths = verify_bundle(comparison, info)
+    mismatches = []
+    for path, other in zip(paths, comparison_paths):
+        digest = sha256(path)
+        other_digest = sha256(other)
+        if digest != other_digest:
+            mismatches.append(f"{path.name}: {digest} != {other_digest}")
+    if mismatches:
+        raise ValueError(
+            f"Reproducibility mismatch between {directory} and {comparison}:\n"
+            + "\n".join(mismatches)
+        )
+    return paths
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True)
-    parser.add_argument("--write-checksums", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--write-checksums", action="store_true")
+    mode.add_argument(
+        "--compare", type=Path, metavar="DIRECTORY",
+        help="verify another bundle and require identical archives and SHA256SUMS",
+    )
     parser.add_argument("directory", type=Path)
     args = parser.parse_args()
-    paths = verify_bundle(args.directory, metadata(args.commit), args.write_checksums)
-    print("Verified: " + ", ".join(path.name for path in paths))
+    info = metadata(args.commit)
+    if args.compare is not None:
+        paths = compare_bundles(args.directory, args.compare, info)
+        print(f"Reproduced {info['commit']}: " + ", ".join(path.name for path in paths))
+    else:
+        paths = verify_bundle(args.directory, info, args.write_checksums)
+        print("Verified: " + ", ".join(path.name for path in paths))
 
 
 if __name__ == "__main__":

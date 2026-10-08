@@ -26,7 +26,9 @@ The documented release recipe has produced byte-identical GNU and musl archives
 in independent local and GitHub Actions builds.
 Maintainers can build the x86-64 GNU and musl archives with rootless Podman.
 See the [release guide](https://github.com/justinrdonnelly/paircomp/blob/main/docs/releases.md) for local builds, the automated draft
-workflow, tagging, and recovery. Crates.io publishing remains manual.
+workflow, reproducibility checks, tagging, and recovery. Each workflow run
+compares the downloads with an independent rebuild before preparing a draft.
+Crates.io publishing remains manual.
 
 ## Build and run
 

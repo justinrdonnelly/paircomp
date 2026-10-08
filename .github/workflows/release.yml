@@ -63,7 +63,8 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.commit }}
           persist-credentials: false
-      - name: Record runner and rootless Podman
+      - &record_runner
+        name: Record runner and rootless Podman
         run: |
           {
             printf 'Runner image: %s %s\n\n' "$ImageOS" "$ImageVersion"
@@ -134,9 +135,43 @@ jobs:
           retention-days: 14
           overwrite: true
 
+  reproducibility:
+    needs: [validate, bundle]
+    runs-on: ubuntu-26.04
+    # Both targets are rebuilt sequentially on this independent runner.
+    timeout-minutes: 90
+    steps:
+      - uses: *checkout
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - *record_runner
+      - uses: *download_artifact
+        with:
+          artifact-ids: ${{ needs.bundle.outputs.artifact_ids }}
+          merge-multiple: true
+          path: dist
+          skip-decompress: true
+      - name: Rebuild both targets independently
+        env:
+          SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: bash scripts/release/build.sh all "$SOURCE_COMMIT" rebuild
+      - name: Compare both archives and SHA256SUMS
+        env:
+          SOURCE_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          python3 scripts/release/artifacts.py --commit "$SOURCE_COMMIT" --compare rebuild dist
+          {
+            printf 'Reproducibility verified for %s.\n\n' "$SOURCE_COMMIT"
+            printf 'Both archives and SHA256SUMS match the independent rebuild.\n\n'
+            printf '```text\n'
+            cat dist/SHA256SUMS
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   draft:
     if: github.event_name == 'push'
-    needs: [validate, bundle]
+    needs: [validate, bundle, reproducibility]
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:

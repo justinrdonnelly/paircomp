@@ -2,8 +2,9 @@
 
 The [release workflow](../.github/workflows/release.yml) builds the tagged source
 commit for `x86_64-unknown-linux-gnu` and `x86_64-unknown-linux-musl`, verifies both
-downloads, and prepares an **unpublished draft**. Review its title, replace the
-editable summary, edit GitHub's generated notes, and publish it manually.
+downloads, checks an independent rebuild, and prepares an **unpublished draft**.
+Review its title, replace the editable summary, edit GitHub's generated notes,
+and publish it manually.
 Crates.io publishing is a separate manual process. Existing published releases
 are not backfilled or changed by this workflow.
 
@@ -110,10 +111,33 @@ executables, bundled files, and archive metadata. Reproducibility applies to
 this specified build recipe and environment, following the
 [Reproducible Builds definition](https://reproducible-builds.org/docs/definition/).
 
-Reproducibility has been verified manually; the workflow does not yet compare
-independent builds automatically. To verify another commit, rebuild it with
-the same recipe and pins and compare the complete archive hashes with the
-corresponding GitHub Actions downloads.
+For both tag pushes and manual dispatches, a `reproducibility` job runs after
+the original bundle is ready. It downloads that bundle by artifact ID and rebuilds
+both targets from the same commit and pins with `build.sh all` on a
+[fresh GitHub-hosted runner](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job#choosing-github-hosted-runners).
+Build output is fresh and no Cargo cache is restored. Both targets are rebuilt
+sequentially in this additional job, doubling the compilation work and
+extending the workflow's runtime.
+
+`artifacts.py --compare` verifies each bundle's archive metadata, source/pins,
+and checksums before comparing the SHA-256 of both complete `.tar.gz` files
+and `SHA256SUMS` itself. A missing, invalid, or differing file fails the job
+and prevents draft preparation. Success records the source commit and archive
+hashes in the reproducibility job's summary. This verifies each workflow run
+under the specified recipe and environment.
+
+To repeat the comparison locally, rebuild the same commit into an empty output
+directory and compare it with an existing complete bundle in `dist`:
+
+```sh
+bash scripts/release/build.sh all HEAD /tmp/paircomp-rebuild
+python3 scripts/release/artifacts.py --commit HEAD --compare /tmp/paircomp-rebuild dist
+```
+
+Both directories must contain archives and `SHA256SUMS` from that commit;
+replace `HEAD` with the recorded source commit when comparing downloaded
+artifacts. Comparison never rewrites checksums and cannot be combined with
+`--write-checksums`.
 
 ## Test before releasing
 
@@ -134,6 +158,9 @@ local/remote tags, draft creation, preserved edited titles/notes, identical
 assets, partial uploads, conflicting/incomplete assets, published-release
 refusal, pagination, and token handling on download redirects. They also check
 archive contents, metadata, permissions, source provenance, and checksums.
+Reproducibility tests cover independent matching bundles, changed executables
+in either target, invalid source/checksums, missing archives, checksum-file
+byte differences, and command exit statuses without rewriting checksum files.
 Mock GitHub tests exercise recovery without creating releases in the repository.
 
 For real container verification, run `build.sh all`. It checks linking, extracts
@@ -185,9 +212,10 @@ unnecessary for testing.
    commits outside remote `main`. `paircomp-core-*` tags do not trigger it.
    It builds the validated exact commit and rechecks `main` and the live remote
    tag before preparing the draft. Annotated and lightweight tags are supported.
-4. After both native builds and archive verification succeed, the draft job
-   uses only GitHub's temporary `GITHUB_TOKEN` with `contents: write`. Other jobs
-   have `contents: read`; checkout credentials are not persisted. Actions are
+4. After both native builds, archive verification, and independent rebuild
+   comparisons succeed, the draft job uses only GitHub's temporary
+   `GITHUB_TOKEN` with `contents: write`. Other jobs have `contents: read`;
+   checkout credentials are not persisted. Actions are
    pinned to full commit SHAs. Runs for one ref are serialized, without
    cancelling an active run.
 5. Open the draft URL from the draft job's log/summary. Check its editable
@@ -215,6 +243,12 @@ verifies them, and uploads `SHA256SUMS` separately. It passes all three artifact
 IDs to the draft job, which downloads those exact files. Edited notes survive
 either rerun. The log prints the draft URL and expected asset list before
 uploads, including when a later upload fails.
+
+A reproducibility failure blocks draft preparation. Its error lists differing
+files with their original and rebuilt hashes. Rerunning the reproducibility job
+uses the existing download artifacts and rebuilds both targets on a fresh
+runner before comparing again. Inspect the mismatch and source/pins before
+another attempt.
 
 A differing asset, a GitHub `starter`/incomplete asset, a changed tag, or an
 already published release makes the job fail. It never deletes or replaces
